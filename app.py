@@ -190,8 +190,8 @@ with st.sidebar:
     st.sidebar.subheader("About & Links")
     st.sidebar.markdown(
         """
-        - [My Personal Website](https://www.example.com)
-        - [GitHub Project Page](https://github.com/YourUsername/YourRepo)
+        - [My Website](https://eng.webphotogallery.store/i2p)
+        - [GitHub Project Page](https://github.com/rorsaeed/image-to-prompt)
         """
     )
     # --- END OF NEW SECTION ---
