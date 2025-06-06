@@ -1,0 +1,4 @@
+# requirements.txt
+streamlit
+requests
+streamlit-image-select
