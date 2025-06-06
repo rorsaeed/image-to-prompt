@@ -2,7 +2,7 @@
 
 This Python application provides a user-friendly interface to interact with local Large Language Models (LLMs) for generating text prompts from images. It supports both **Ollama** and **LM Studio** as backends.
 
-![Screenshot Placeholder](https://via.placeholder.com/800x450.png?text=App+Screenshot+Here)
+![Screenshot Placeholder](https://github.com/user-attachments/assets/f3775242-51e7-4192-8653-0d5b0fa1b3bf)
 
 ## Features
 
