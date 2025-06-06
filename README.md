@@ -16,7 +16,7 @@ This Python application provides a user-friendly interface to interact with loca
 - **Persistent Settings**: Remembers your last selected model and API settings.
 - **Light/Dark Theme**: Supported via Streamlit's built-in theme settings ( hamburger menu -> Settings).
 
-## ?? Prerequisites
+## Prerequisites
 
 Before running the application, you **MUST** have one of the following installed and running:
 
