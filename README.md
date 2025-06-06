@@ -34,7 +34,25 @@ Before running the application, you **MUST** have one of the following installed
 
 **You must have a vision-capable model ready to use.**
 
-## Installation & Usage
+## Installation & Usage (for Windows)
+
+1.  **Get the code from GitHub:**
+    ```bash
+    git clone https://github.com/rorsaeed/image-to-prompt.git
+    cd image-to-prompt
+    ```
+
+2.  **Run the simple installer (for Windows):**
+    ```bash
+     install.bat
+    ```
+
+3.  **Launch the app!:**
+    ```bash
+    run.bat
+    ```
+
+## Manual Installation
 
 1.  **Navigate into the project directory:**
     ```bash
