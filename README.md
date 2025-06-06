@@ -54,23 +54,24 @@ Before running the application, you **MUST** have one of the following installed
 
 ## Manual Installation
 
-1.  **Navigate into the project directory:**
+1.  **Get the code from GitHub:**
     ```bash
-    cd image-to-prompt-app
+    git clone https://github.com/rorsaeed/image-to-prompt.git
+    cd image-to-prompt
     ```
 
-2.  **Create a virtual environment (recommended):**
+3.  **Create a virtual environment (recommended):**
     ```bash
     python -m venv venv
     source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
     ```
 
-3.  **Install the required packages:**
+4.  **Install the required packages:**
     ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Run the Streamlit application:**
+5.  **Run the Streamlit application:**
     ```bash
     streamlit run app.py
     ```
