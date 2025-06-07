@@ -22,67 +22,103 @@ st.set_page_config(
 def init_session_state():
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "chat_id" not in st.session_state:
+        st.session_state.chat_id = None
     if "config" not in st.session_state:
         st.session_state.config = cm.load_config()
     if "system_prompts" not in st.session_state:
         st.session_state.system_prompts = cm.load_system_prompts()
     if "current_system_prompt" not in st.session_state:
-        st.session_state.current_system_prompt = st.session_state.system_prompts.get("Default Image-to-Prompt", "")
+        last_prompt_name = st.session_state.config.get("last_system_prompt_name", "Default Image-to-Prompt")
+        st.session_state.current_system_prompt = st.session_state.system_prompts.get(last_prompt_name, st.session_state.system_prompts.get("Default Image-to-Prompt", ""))
+        st.session_state.current_system_prompt_name = last_prompt_name
     if "uploaded_files" not in st.session_state:
         st.session_state.uploaded_files = []
     if "unload_after_response" not in st.session_state:
         st.session_state.unload_after_response = False
+    if "uploader_key" not in st.session_state:
+        st.session_state.uploader_key = str(uuid.uuid4())
 
 init_session_state()
 
-# --- Helper Functions ---
+# --- Helper & Chat Management Functions ---
 def save_uploaded_file(uploaded_file):
     temp_dir = Path("temp_images")
     temp_dir.mkdir(exist_ok=True)
     file_path = temp_dir / f"{uuid.uuid4()}_{uploaded_file.name}"
+    original_name = uploaded_file.name
     with open(file_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    return file_path
+    return (file_path, original_name)
+
+def auto_save_chat():
+    if not st.session_state.messages: return
+    if st.session_state.chat_id is None:
+        first_user_message = next((msg['content'] for msg in st.session_state.messages if msg['role'] == 'user'), 'New Chat')
+        safe_title = "".join(c for c in first_user_message if c.isalnum() or c in " ._").rstrip()[:50]
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        st.session_state.chat_id = f"{safe_title}_{timestamp}.json"
+    cm.save_conversation(st.session_state.chat_id, st.session_state.messages)
+
+def start_new_chat():
+    st.session_state.messages = []
+    st.session_state.chat_id = None
+    st.session_state.uploaded_files = []
+    st.session_state.uploader_key = str(uuid.uuid4())
+
+def load_chat_callback():
+    selected_chat_file = st.session_state.get("selected_chat")
+    if selected_chat_file:
+        filepath = cm.CONVERSATIONS_DIR / selected_chat_file
+        st.session_state.messages = cm.load_conversation(filepath)
+        st.session_state.chat_id = selected_chat_file
+        st.session_state.uploaded_files = []
+        st.session_state.uploader_key = str(uuid.uuid4())
 
 # --- Central function to process and send messages ---
-def process_and_send_message(prompt_text, image_paths):
+def process_and_send_message(prompt_text, uploaded_file_info):
     if not st.session_state.config["selected_models"]:
         st.error("Please select at least one model from the sidebar.")
         return
 
+    image_paths = [info[0] for info in uploaded_file_info]
+    image_info_for_message = [{"path": str(info[0]), "name": info[1]} for info in uploaded_file_info]
     is_image_only_request = not prompt_text.strip()
     internal_prompt = prompt_text if not is_image_only_request else "Analyze the attached image(s) according to the system prompt."
     display_text = prompt_text
     
-    user_message = {
-        "role": "user", "content": internal_prompt, 
-        "display_content": display_text, "id": str(uuid.uuid4())
-    }
-    if image_paths:
-        user_message["images"] = [str(p) for p in image_paths]
+    # This user_message is for display and chat history ONLY
+    user_message = {"role": "user", "content": internal_prompt, "display_content": display_text, "id": str(uuid.uuid4())}
+    if image_info_for_message:
+        user_message["images"] = image_info_for_message
     
     st.session_state.messages.append(user_message)
-    with st.chat_message("user"):
-        if display_text:
-            st.markdown(display_text)
-        if image_paths:
-            st.image([str(p) for p in image_paths], width=200)
+    auto_save_chat()
 
-    base_api_messages = [{"role": "system", "content": st.session_state.current_system_prompt}]
-    for msg in st.session_state.messages:
-        if msg['role'] != 'system':
-             base_api_messages.append({"role": msg["role"], "content": msg["content"]})
+    # <<< THIS IS THE FIX >>>
+    # Build a clean, single-turn message list for the API call.
+    # This prevents any contamination from past chat history.
+    api_messages = [
+        {"role": "system", "content": st.session_state.current_system_prompt},
+        # Use the internal_prompt, not one from history
+        {"role": "user", "content": internal_prompt} 
+    ]
     
     for model in st.session_state.config["selected_models"]:
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             full_response = ""
-            messages_for_this_model = copy.deepcopy(base_api_messages)
+            # Deepcopy is still good practice as the client might mutate the list
+            messages_for_this_model = copy.deepcopy(api_messages)
 
             with st.spinner(f"Asking {model}..."):
                 try:
+                    # Pass the clean messages and the CURRENT image paths
                     stream = api_client.generate_chat_response(
-                        model=model, messages=messages_for_this_model, images=image_paths)
+                        model=model, 
+                        messages=messages_for_this_model, 
+                        images=image_paths # These are from the current upload
+                    )
                     for chunk in stream:
                         full_response += chunk
                         message_placeholder.markdown(f"**Response from `{model}`:**\n\n" + full_response + " |")
@@ -91,140 +127,163 @@ def process_and_send_message(prompt_text, image_paths):
                     st.error(f"An error occurred with model {model}: {e}")
                     full_response = f"Error: {e}"
 
-            assistant_message = {
-                "role": "assistant", "content": full_response,
-                "display_content": f"**Response from `{model}`:**\n\n" + full_response,
-                "model": model, "id": str(uuid.uuid4())
-            }
+            assistant_message = {"role": "assistant", "content": full_response, "display_content": f"**Response from `{model}`:**\n\n" + full_response, "model": model, "id": str(uuid.uuid4())}
             st.session_state.messages.append(assistant_message)
-            st.button(f"📋 Copy Response", key=f"copy_{assistant_message['id']}", on_click=st.write, args=(full_response,))
+            auto_save_chat()
 
     if st.session_state.get("unload_after_response", False) and st.session_state.config["api_provider"] == "Ollama":
         with st.spinner("Unloading models from memory..."):
-            models_to_unload = st.session_state.config["selected_models"]
-            for model in models_to_unload:
+            for model in st.session_state.config["selected_models"]:
                 api_client.unload_model(model)
         st.toast("Models unloaded from memory.", icon="✅")
     
     st.session_state.uploaded_files = []
+    st.session_state.uploader_key = str(uuid.uuid4())
     st.rerun()
 
 # --- Sidebar ---
+# The sidebar code remains exactly the same as the previous correct version.
 with st.sidebar:
-    st.header("⚙️ Configuration")
-    st.session_state.config["api_provider"] = st.radio(
-        "API Provider", ["Ollama", "LM Studio"],
-        index=0 if st.session_state.config["api_provider"] == "Ollama" else 1, key="api_provider_selector")
-    
-    default_url = "http://localhost:11434" if st.session_state.config["api_provider"] == "Ollama" else "http://localhost:1234"
-    st.session_state.config["api_base_url"] = st.text_input(
-        "API Base URL", value=st.session_state.config.get("api_base_url", default_url), key="api_base_url_input")
+    st.header("💬 Conversations")
+    if st.button("➕ New Chat", use_container_width=True, on_click=start_new_chat):
+        st.rerun()
+    saved_chats = cm.list_conversations()
+    chat_options = {f.name: f.name.replace(".json", "").replace("_", " ") for f in saved_chats}
+    options_with_placeholder = {"": "Select a chat..."}
+    options_with_placeholder.update(chat_options)
+    current_selection_key = st.session_state.chat_id if st.session_state.chat_id in chat_options else ""
+    st.selectbox("Load Chat", options=list(options_with_placeholder.keys()), 
+                 format_func=lambda x: options_with_placeholder[x],
+                 index=list(options_with_placeholder.keys()).index(current_selection_key), 
+                 on_change=load_chat_callback, key="selected_chat")
+    if st.session_state.chat_id:
+        with st.expander("Manage Current Chat"):
+            new_chat_name = st.text_input("Rename chat:", value=chat_options.get(st.session_state.chat_id, ""))
+            if st.button("Rename", use_container_width=True):
+                if new_chat_name and new_chat_name != chat_options.get(st.session_state.chat_id, ""):
+                    new_filename = new_chat_name.replace(" ", "_") + ".json"
+                    if cm.rename_conversation(st.session_state.chat_id, new_filename):
+                        st.session_state.chat_id = new_filename
+                        st.toast("Chat renamed!", icon="✏️")
+                        st.rerun()
+                    else: st.error("A chat with this name already exists.")
+            if st.button("Delete Chat", type="primary", use_container_width=True):
+                cm.delete_conversation(st.session_state.chat_id)
+                start_new_chat()
+                st.toast("Chat deleted!", icon="🗑️")
+                st.rerun()
+    st.divider()
 
+    st.header("⚙️ Configuration")
+    st.session_state.config["api_provider"] = st.radio("API Provider", ["Ollama", "LM Studio"], index=0 if st.session_state.config.get("api_provider", "Ollama") == "Ollama" else 1, key="api_provider_selector")
+    default_url = "http://localhost:11434" if st.session_state.config["api_provider"] == "Ollama" else "http://localhost:1234"
+    st.session_state.config["api_base_url"] = st.text_input("API Base URL", value=st.session_state.config.get("api_base_url", default_url), key="api_base_url_input")
     api_client = APIClient(provider=st.session_state.config["api_provider"], base_url=st.session_state.config["api_base_url"])
-    
-    with st.spinner("Fetching available models..."):
-        available_models = api_client.get_available_models()
-    
-    if not available_models:
-        st.error("Could not connect or no models found. Ensure the service is running.")
+    with st.spinner("Fetching available models..."): available_models = api_client.get_available_models()
+    if not available_models: st.error("Could not connect or no models found.")
     else:
-        st.session_state.config["selected_models"] = st.multiselect(
-            "Select Model(s)", options=available_models,
-            default=st.session_state.config.get("selected_models", []))
-    
+        saved_selection = st.session_state.config.get("selected_models", [])
+        valid_selection = [model for model in saved_selection if model in available_models]
+        st.session_state.config["selected_models"] = st.multiselect("Select Model(s)", options=available_models, default=valid_selection)
     st.subheader("Model Management")
     is_ollama = st.session_state.config["api_provider"] == "Ollama"
-    
     if st.button("Unload Selected Models", disabled=not is_ollama):
-        if not st.session_state.config["selected_models"]:
-            st.warning("No models selected to unload.")
+        if not st.session_state.config["selected_models"]: st.warning("No models selected to unload.")
         else:
             for model_name in st.session_state.config["selected_models"]:
-                with st.spinner(f"Unloading {model_name}..."):
-                    result = api_client.unload_model(model_name)
-                    st.success(f"Successfully unloaded '{model_name}'.") if result['status'] == 'success' else st.error(f"Failed to unload '{model_name}': {result['message']}")
+                with st.spinner(f"Unloading {model_name}..."): result = api_client.unload_model(model_name)
+                st.success(f"Successfully unloaded '{model_name}'.") if result['status'] == 'success' else st.error(f"Failed to unload '{model_name}': {result['message']}")
             st.rerun()
-
-    st.session_state.unload_after_response = st.checkbox(
-        "Unload models after response",
-        value=st.session_state.unload_after_response,
-        help="If checked, models used will be unloaded from VRAM after responding. (Ollama only)",
-        disabled=not is_ollama
-    )
-    if not is_ollama and st.session_state.unload_after_response:
-        st.session_state.unload_after_response = False
-
+    st.session_state.unload_after_response = st.checkbox("Unload models after response", value=st.session_state.unload_after_response, help="(Ollama only)", disabled=not is_ollama)
+    if not is_ollama and st.session_state.unload_after_response: st.session_state.unload_after_response = False
+    
     st.subheader("System Prompt")
     prompt_names = list(st.session_state.system_prompts.keys())
-    selected_prompt_name = st.selectbox("Choose or create a prompt", options=["New Custom Prompt"] + prompt_names)
-
-    if selected_prompt_name != "New Custom Prompt":
-        st.session_state.current_system_prompt = st.session_state.system_prompts[selected_prompt_name]
-    
-    st.session_state.current_system_prompt = st.text_area(
-        "System Prompt Content", value=st.session_state.current_system_prompt, height=200, key="system_prompt_text_area")
-    
-    prompt_save_name = st.text_input("Enter name to save prompt:", value=selected_prompt_name if selected_prompt_name != "New Custom Prompt" else "")
+    try:
+        current_prompt_index = prompt_names.index(st.session_state.current_system_prompt_name) + 1
+    except (ValueError, AttributeError):
+        current_prompt_index = 0
+    def on_prompt_change():
+        selected_name = st.session_state.prompt_selector
+        if selected_name != "New Custom Prompt":
+            st.session_state.current_system_prompt_name = selected_name
+            st.session_state.current_system_prompt = st.session_state.system_prompts[selected_name]
+            st.session_state.config['last_system_prompt_name'] = selected_name
+        else:
+            st.session_state.current_system_prompt_name = ""
+    st.selectbox("Choose or create a prompt", 
+                 options=["New Custom Prompt"] + prompt_names,
+                 index=current_prompt_index,
+                 on_change=on_prompt_change,
+                 key="prompt_selector")
+    st.session_state.current_system_prompt = st.text_area("System Prompt Content", value=st.session_state.current_system_prompt, height=200, key="system_prompt_text_area")
+    prompt_save_name = st.text_input("Enter name to save prompt:", value=st.session_state.get("current_system_prompt_name", ""))
     if st.button("Save System Prompt"):
         if prompt_save_name:
             st.session_state.system_prompts[prompt_save_name] = st.session_state.current_system_prompt
             cm.save_system_prompts(st.session_state.system_prompts)
-            st.success(f"Prompt '{prompt_save_name}' saved!")
+            st.session_state.current_system_prompt_name = prompt_save_name
+            st.session_state.config['last_system_prompt_name'] = prompt_save_name
+            st.toast(f"Prompt '{prompt_save_name}' saved!", icon="✅")
             st.rerun()
-        else:
-            st.warning("Please enter a name for the prompt before saving.")
-
+        else: st.warning("Please enter a name for the prompt before saving.")
     cm.save_config(st.session_state.config)
-
     st.subheader("Export Conversation")
     if st.session_state.messages:
         col1, col2 = st.columns(2)
-        now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        chat_name = st.session_state.chat_id.replace(".json", "") if st.session_state.chat_id else f"conversation_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         txt_data = "".join(f"--- {msg['role'].upper()} ---\n{msg.get('display_content', '')}\n\n" for msg in st.session_state.messages)
-        col1.download_button("to .txt", txt_data, f"conversation_{now}.txt", "text/plain")
+        col1.download_button("to .txt", txt_data, f"{chat_name}.txt", "text/plain")
         json_data = json.dumps(st.session_state.messages, indent=2)
-        col2.download_button("to .json", json_data, f"conversation_{now}.json", "application/json")
-
-    # --- NEW: About & Links Section ---
+        col2.download_button("to .json", json_data, f"{chat_name}.json", "application/json")
     st.sidebar.divider()
-    st.sidebar.subheader("About & Links")
-    st.sidebar.markdown(
-        """
-        - [My Website](https://eng.webphotogallery.store/i2p)
-        - [GitHub Project Page](https://github.com/rorsaeed/image-to-prompt)
-        """
-    )
-    # --- END OF NEW SECTION ---
+    st.sidebar.markdown("""- [My Website](https://eng.webphotogallery.store/i2p)\n- [GitHub Project Page](https://github.com/rorsaeed/image-to-prompt)""")
 
-# --- Main Application Area (No changes here) ---
+# --- Main Application Area ---
 st.title("🖼️ Image-to-Prompt AI Assistant")
-st.warning(
-    "**Important:** Ensure **LM Studio** or **Ollama** is running with the API server enabled and a vision model loaded."
-)
+st.warning("**Important:** Ensure **LM Studio** or **Ollama** is running with the API server enabled and a vision model loaded.")
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        if message["display_content"]:
+        if message.get("display_content"):
             st.markdown(message["display_content"])
         if "images" in message:
-            st.image([str(Path(p)) for p in message["images"] if Path(p).exists()], width=200)
-        if "display_content" in message and message["display_content"]:
-            st.button(f"📋 Copy Text", key=f"copy_{message['id']}", on_click=st.write, args=(message['display_content'],))
+            cols = st.columns(len(message["images"]))
+            for i, image_info in enumerate(message["images"]):
+                with cols[i]:
+                    img_path = Path(image_info["path"])
+                    if img_path.exists():
+                        st.image(str(img_path), width=150)
+                        with st.popover("View Full Size", use_container_width=True):
+                            st.image(str(img_path))
+                        st.caption(image_info["name"])
 
-uploaded_files = st.file_uploader(
-    "Upload Images (Drag & Drop Supported)", type=["png", "jpg", "jpeg", "webp", "gif"],
-    accept_multiple_files=True, key="file_uploader")
-
-if uploaded_files:
+# --- User Input Section ---
+st.subheader("Upload Images (Optional)")
+uploaded_files_from_widget = st.file_uploader(
+    "Upload Images (Drag & Drop Supported)", 
+    type=["png", "jpg", "jpeg", "webp", "gif"],
+    accept_multiple_files=True,
+    key=st.session_state.uploader_key
+)
+if uploaded_files_from_widget:
     if not st.session_state.uploaded_files: 
-        st.session_state.uploaded_files = [save_uploaded_file(f) for f in uploaded_files]
-    st.image([str(p) for p in st.session_state.uploaded_files], width=100)
+        st.session_state.uploaded_files = [save_uploaded_file(f) for f in uploaded_files_from_widget]
+    
+    st.write("Attached images:")
+    cols = st.columns(len(st.session_state.uploaded_files))
+    for i, file_info in enumerate(st.session_state.uploaded_files):
+        with cols[i]:
+            st.image(str(file_info[0]), width=150)
+            with st.popover("View Full Size", use_container_width=True):
+                st.image(str(file_info[0]))
+            st.caption(file_info[1])
 
 col1, col2 = st.columns([1, 4])
 with col1:
     if st.session_state.uploaded_files:
         if st.button("Analyze Image(s)"):
-            process_and_send_message(prompt_text="", image_paths=st.session_state.uploaded_files)
+            process_and_send_message(prompt_text="", uploaded_file_info=st.session_state.uploaded_files)
 with col2:
     if prompt := st.chat_input("...or add a message and press Enter"):
-        process_and_send_message(prompt_text=prompt, image_paths=st.session_state.uploaded_files)
+        process_and_send_message(prompt_text=prompt, uploaded_file_info=st.session_state.uploaded_files)
