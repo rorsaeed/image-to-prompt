@@ -93,3 +93,45 @@ def save_conversation(conversation_history, filename):
                             f.write(item['text'] + "\n\n")
             f.write("\n" + "="*40 + "\n")
     return str(path.resolve())
+    
+# --- NEW AND UPDATED CONVERSATION FUNCTIONS ---
+
+def list_conversations():
+    """Lists all saved conversation files, sorted by modification time."""
+    ensure_data_dirs()
+    files = list(CONVERSATIONS_DIR.glob("*.json"))
+    files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    return files
+
+def load_conversation(filepath):
+    """Loads a conversation from a JSON file."""
+    if not filepath.exists():
+        return []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def save_conversation(filename, conversation_history):
+    """Saves a conversation to a file. Overwrites if exists."""
+    ensure_data_dirs()
+    path = CONVERSATIONS_DIR / filename
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(conversation_history, f, indent=2)
+
+def rename_conversation(old_filename, new_filename):
+    """Renames a conversation file."""
+    ensure_data_dirs()
+    old_path = CONVERSATIONS_DIR / old_filename
+    new_path = CONVERSATIONS_DIR / new_filename
+    if old_path.exists():
+        os.rename(old_path, new_path)
+        return True
+    return False
+
+def delete_conversation(filename):
+    """Deletes a conversation file."""
+    ensure_data_dirs()
+    path = CONVERSATIONS_DIR / filename
+    if path.exists():
+        os.remove(path)
+        return True
+    return False
