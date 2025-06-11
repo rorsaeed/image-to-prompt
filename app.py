@@ -66,7 +66,6 @@ def load_chat_callback():
         st.session_state.uploaded_files = []; st.session_state.uploader_key = str(uuid.uuid4())
 
 # <<< The `regenerate_last_response` function has been REMOVED >>>
-
 def run_generation_logic():
     try:
         last_user_message = st.session_state.messages[-1]
@@ -124,6 +123,16 @@ def process_and_send_message(prompt_text, uploaded_file_info):
     auto_save_chat()
     st.session_state.generating = True
     st.rerun()
+
+def remove_uploaded_image(idx):
+    if 0 <= idx < len(st.session_state.uploaded_files):
+        del st.session_state.uploaded_files[idx]
+        st.rerun()
+
+def remove_message(idx):
+    if 0 <= idx < len(st.session_state.messages):
+        del st.session_state.messages[idx]
+        st.rerun()
 
 # --- Sidebar ---
 with st.sidebar:
@@ -196,23 +205,54 @@ with st.sidebar:
         col2.download_button("to .json", json_data, f"{chat_name}.json", "application/json")
     st.sidebar.divider(); st.sidebar.markdown("""- [My Website](https://eng.webphotogallery.store/i2p)\n- [GitHub Project Page](https://github.com/rorsaeed/image-to-prompt)""")
 
+# --- Custom CSS for transparent X buttons ---
+st.markdown(
+    """
+    <style>
+    button[data-testid="baseButton"]:has(div:contains('×')), 
+    button[data-testid="baseButton"]:has(span:contains('×')) {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #222 !important;
+        font-size: 1em;
+        padding: 0.05em 0.3em;
+        margin: 0;
+        transition: color 0.2s;
+    }
+    button[data-testid="baseButton"]:has(div:contains('×')):hover, 
+    button[data-testid="baseButton"]:has(span:contains('×')):hover {
+        color: #000 !important;
+        background: transparent !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # --- Main Application Area ---
 st.title("🖼️ Image-to-Prompt AI Assistant")
 st.warning("**Important:** Ensure **LM Studio** or **Ollama** is running with the API server enabled and a vision model loaded.")
 
-for message in st.session_state.messages:
+for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
-        if "display_content" in message: st.markdown(message["display_content"])
-        if "images" in message:
-            cols = st.columns(len(message["images"]))
-            for j, image_info in enumerate(message["images"]):
-                with cols[j]:
-                    img_path = Path(image_info["path"])
-                    if img_path.exists():
-                        st.image(str(img_path), width=150)
-                        with st.popover("View Full Size", use_container_width=True):
-                            st.image(str(img_path))
-                        st.caption(image_info["name"])
+        col_msg, col_btn = st.columns([8, 1])
+        with col_msg:
+            if "display_content" in message:
+                st.markdown(message["display_content"])
+            if "images" in message:
+                img_cols = st.columns(len(message["images"]))
+                for j, image_info in enumerate(message["images"]):
+                    with img_cols[j]:
+                        img_path = Path(image_info["path"])
+                        if img_path.exists():
+                            st.image(str(img_path), width=150)
+                            with st.popover("View Full Size", use_container_width=True):
+                                st.image(str(img_path))
+                            st.caption(image_info["name"])
+        with col_btn:
+            if st.button("×", key=f"remove_msg_{idx}", help="Delete this message"):
+                remove_message(idx)
 
 if st.session_state.generating:
     run_generation_logic()
@@ -220,7 +260,8 @@ else:
     st.subheader("Upload Images (Optional)")
     uploaded_files_from_widget = st.file_uploader("Upload Images (Drag & Drop Supported)", type=["png", "jpg", "jpeg", "webp", "gif"], accept_multiple_files=True, key=st.session_state.uploader_key)
     if uploaded_files_from_widget:
-        if not st.session_state.uploaded_files: st.session_state.uploaded_files = [save_uploaded_file(f) for f in uploaded_files_from_widget]
+        if not st.session_state.uploaded_files:
+            st.session_state.uploaded_files = [save_uploaded_file(f) for f in uploaded_files_from_widget]
         st.write("Attached images:")
         cols = st.columns(len(st.session_state.uploaded_files))
         for i, file_info in enumerate(st.session_state.uploaded_files):
@@ -229,10 +270,14 @@ else:
                 with st.popover("View Full Size", use_container_width=True):
                     st.image(str(file_info[0]))
                 st.caption(file_info[1])
+                # Add close button for uploaded image
+                if st.button("× Remove", key=f"remove_uploaded_{i}"):
+                    remove_uploaded_image(i)
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.session_state.uploaded_files:
-            if st.button("Analyze Image(s)"): process_and_send_message(prompt_text="", uploaded_file_info=st.session_state.uploaded_files)
+            if st.button("Analyze Image(s)"):
+                process_and_send_message(prompt_text="", uploaded_file_info=st.session_state.uploaded_files)
     with col2:
-        if prompt := st.chat_input("...or add a message and press Enter", disabled=not st.session_state.uploaded_files): # Disable chat if no image is present for this workflow
+        if prompt := st.chat_input("...or add a message and press Enter", disabled=not st.session_state.uploaded_files):
             process_and_send_message(prompt_text=prompt, uploaded_file_info=st.session_state.uploaded_files)
