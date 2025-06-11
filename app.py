@@ -134,6 +134,62 @@ def remove_message(idx):
         del st.session_state.messages[idx]
         st.rerun()
 
+def regenerate_message(idx, container=None):
+    # Only allow regeneration for assistant messages
+    if 0 <= idx < len(st.session_state.messages):
+        msg = st.session_state.messages[idx]
+        if msg.get('role') != 'assistant':
+            st.warning('Only assistant messages can be regenerated.')
+            return
+        # Find the user message before this assistant message
+        user_idx = idx - 1
+        while user_idx >= 0 and st.session_state.messages[user_idx].get('role') != 'user':
+            user_idx -= 1
+        if user_idx < 0:
+            st.warning('No user message found to regenerate from.')
+            return
+        user_msg = st.session_state.messages[user_idx]
+        # Prepare context up to and including the user message
+        context_msgs = []
+        for m in st.session_state.messages[:user_idx+1]:
+            if m.get('role') == 'system':
+                continue
+            context_msgs.append({'role': m['role'], 'content': m['content']})
+        # Add system prompt
+        api_messages = [{'role': 'system', 'content': st.session_state.current_system_prompt}] + context_msgs
+        # Get images from user message if any
+        image_info = user_msg.get('images', [])
+        image_paths = [Path(info['path']) for info in image_info]
+        # Call the LLM for each selected model (regenerate only for the model of this message)
+        model = msg.get('model', st.session_state.config['selected_models'][0])
+        api_client = APIClient(provider=st.session_state.config.get('api_provider', 'Ollama'), base_url=st.session_state.config.get('api_base_url', 'http://localhost:11434'))
+        target = container if container is not None else st
+        message_placeholder = target.empty()
+        prefix = f"**Response from `{model}`:**\n\n"
+        message_placeholder.markdown(prefix + "▌")
+        full_response = ""
+        try:
+            stream_generator = api_client.generate_chat_response(model=model, messages=copy.deepcopy(api_messages), images=image_paths)
+            for chunk in stream_generator:
+                full_response += chunk
+                message_placeholder.markdown(prefix + full_response + "▌")
+            message_placeholder.markdown(prefix + full_response)
+        except Exception as e:
+            st.error(f"An error occurred with model {model}: {e}"); full_response = f"Error: {e}"
+            message_placeholder.markdown(prefix + full_response)
+        display_response = prefix + full_response
+        # Insert a new assistant message right after the current one
+        new_message = {
+            'role': 'assistant',
+            'content': full_response,
+            'display_content': display_response,
+            'model': model,
+            'id': str(uuid.uuid4())
+        }
+        st.session_state.messages.insert(idx + 1, new_message)
+        auto_save_chat()
+        st.rerun()
+
 # --- Sidebar ---
 with st.sidebar:
     st.header("💬 Conversations"); 
@@ -234,9 +290,13 @@ st.markdown(
 st.title("🖼️ Image-to-Prompt AI Assistant")
 st.warning("**Important:** Ensure **LM Studio** or **Ollama** is running with the API server enabled and a vision model loaded.")
 
+# Create a list of containers for each message so we can update them in-place
+message_containers = []
 for idx, message in enumerate(st.session_state.messages):
-    with st.chat_message(message["role"]):
-        col_msg, col_btn = st.columns([8, 1])
+    container = st.container()
+    message_containers.append(container)
+    with container:
+        col_msg, col_btn, col_regen = st.columns([8, 1, 1])
         with col_msg:
             if "display_content" in message:
                 st.markdown(message["display_content"])
@@ -253,6 +313,10 @@ for idx, message in enumerate(st.session_state.messages):
         with col_btn:
             if st.button("×", key=f"remove_msg_{idx}", help="Delete this message"):
                 remove_message(idx)
+        with col_regen:
+            if message.get('role') == 'assistant':
+                if st.button("↻", key=f"regen_msg_{idx}", help="Regenerate this message"):
+                    regenerate_message(idx, message_containers[idx])
 
 if st.session_state.generating:
     run_generation_logic()
