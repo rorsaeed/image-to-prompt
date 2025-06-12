@@ -33,6 +33,10 @@ Before running the application, you **MUST** have one of the following installed
     -   Click **"Start Server"**.
 
 **You must have a vision-capable model ready to use.**
+Recommended model:
+
+[bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF · Hugging Face](https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF)
+
 
 ## Installation & Usage (for Windows)
 
