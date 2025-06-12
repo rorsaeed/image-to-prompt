@@ -343,5 +343,5 @@ else:
             if st.button("Analyze Image(s)"):
                 process_and_send_message(prompt_text="", uploaded_file_info=st.session_state.uploaded_files)
     with col2:
-        if prompt := st.chat_input("...or add a message and press Enter", disabled=not st.session_state.uploaded_files):
+        if prompt := st.chat_input("...or add a message and press Enter"):
             process_and_send_message(prompt_text=prompt, uploaded_file_info=st.session_state.uploaded_files)
