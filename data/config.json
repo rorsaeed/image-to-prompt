@@ -1,8 +1,8 @@
-{
-  "api_provider": "LM Studio",
-  "api_base_url": "http://localhost:1234",
-  "selected_models": [
-    "koboldcpp/Llama-3.1-Unhinged-Vision-8B-q8_0"
-  ],
-  "last_system_prompt_name": "SDXL Image"
-}
+  {
+    "api_provider": "Koboldcpp",
+    "api_base_url": "http://localhost:5001",
+    "selected_models": [
+      "koboldcpp/Llama-3.1-Unhinged-Vision-8B-q8_0"
+    ],
+    "last_system_prompt_name": "SDXL Image"
+  }
