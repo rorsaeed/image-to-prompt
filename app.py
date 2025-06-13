@@ -192,15 +192,16 @@ def regenerate_message(idx, container=None):
 
 # --- Sidebar ---
 with st.sidebar:
-    st.header("💬 Conversations"); 
+    st.header("💬 Conversations")
     if st.button("➕ New Chat", use_container_width=True, on_click=start_new_chat): st.rerun()
-    saved_chats = cm.list_conversations(); chat_options = {f.name: f.name.replace(".json", "").replace("_", " ") for f in saved_chats}
+    saved_chats = cm.list_conversations()
+    chat_options = {f.name: f.name.replace(".json", "").replace("_", " ") for f in saved_chats}
     options_with_placeholder = {"": "Select a chat..."}; options_with_placeholder.update(chat_options)
     current_selection_key = st.session_state.chat_id if st.session_state.chat_id in chat_options else ""
     st.selectbox("Load Chat", options=list(options_with_placeholder.keys()), format_func=lambda x: options_with_placeholder[x], index=list(options_with_placeholder.keys()).index(current_selection_key), on_change=load_chat_callback, key="selected_chat")
     if st.session_state.chat_id:
         with st.expander("Manage Current Chat"):
-            new_chat_name = st.text_input("Rename chat:", value=chat_options.get(st.session_state.chat_id, ""));
+            new_chat_name = st.text_input("Rename chat:", value=chat_options.get(st.session_state.chat_id, ""))
             if st.button("Rename", use_container_width=True):
                 if new_chat_name and new_chat_name != chat_options.get(st.session_state.chat_id, ""):
                     new_filename = new_chat_name.replace(" ", "_") + ".json"
@@ -210,26 +211,64 @@ with st.sidebar:
                 cm.delete_conversation(st.session_state.chat_id); start_new_chat(); st.toast("Chat deleted!", icon="🗑️"); st.rerun()
     st.divider()
     st.header("⚙️ Configuration")
-    api_client = APIClient(provider=st.session_state.config.get("api_provider", "Ollama"), base_url=st.session_state.config.get("api_base_url", "http://localhost:11434"))
-    st.session_state.config["api_provider"] = st.radio("API Provider", ["Ollama", "LM Studio"], index=0 if st.session_state.config.get("api_provider", "Ollama") == "Ollama" else 1, key="api_provider_selector", disabled=st.session_state.generating)
-    default_url = "http://localhost:11434" if st.session_state.config["api_provider"] == "Ollama" else "http://localhost:1234"
-    st.session_state.config["api_base_url"] = st.text_input("API Base URL", value=st.session_state.config.get("api_base_url", default_url), key="api_base_url_input", disabled=st.session_state.generating)
-    with st.spinner("Fetching available models..."): available_models = api_client.get_available_models()
-    if not available_models: st.error("Could not connect or no models found.")
+    api_providers = ["Ollama", "LM Studio", "Koboldcpp"]
+    current_provider = st.session_state.config.get("api_provider", "Ollama")
+    st.session_state.config["api_provider"] = st.radio(
+        "API Provider",
+        api_providers,
+        index=api_providers.index(current_provider) if current_provider in api_providers else 0,
+        key="api_provider_selector",
+        disabled=st.session_state.generating
+    )
+    if st.session_state.config["api_provider"] == "Ollama":
+        default_url = "http://localhost:11434"
+    elif st.session_state.config["api_provider"] == "LM Studio":
+        default_url = "http://localhost:1234"
+    else:  # Koboldcpp
+        default_url = "http://localhost:5001"
+    st.session_state.config["api_base_url"] = st.text_input(
+        "API Base URL",
+        value=st.session_state.config.get("api_base_url", default_url),
+        key="api_base_url_input",
+        disabled=st.session_state.generating
+    )
+    api_client = APIClient(
+        provider=st.session_state.config["api_provider"],
+        base_url=st.session_state.config["api_base_url"]
+    )
+    with st.spinner("Fetching available models..."):
+        available_models = api_client.get_available_models()
+    if not available_models:
+        st.error("Could not connect or no models found.")
     else:
-        saved_selection = st.session_state.config.get("selected_models", []); valid_selection = [model for model in saved_selection if model in available_models]
-        st.session_state.config["selected_models"] = st.multiselect("Select Model(s)", options=available_models, default=valid_selection, disabled=st.session_state.generating)
+        saved_selection = st.session_state.config.get("selected_models", [])
+        valid_selection = [model for model in saved_selection if model in available_models]
+        st.session_state.config["selected_models"] = st.multiselect(
+            "Select Model(s)",
+            options=available_models,
+            default=valid_selection,
+            disabled=st.session_state.generating
+        )
     st.subheader("Model Management")
     is_ollama = st.session_state.config["api_provider"] == "Ollama"
     if st.button("Unload Selected Models", disabled=not is_ollama or st.session_state.generating):
-        if not st.session_state.config["selected_models"]: st.warning("No models selected to unload.")
+        if not st.session_state.config["selected_models"]:
+            st.warning("No models selected to unload.")
         else:
             for model_name in st.session_state.config["selected_models"]:
-                with st.spinner(f"Unloading {model_name}..."): result = api_client.unload_model(model_name)
+                with st.spinner(f"Unloading {model_name}..."):
+                    result = api_client.unload_model(model_name)
                 st.success(f"Successfully unloaded '{model_name}'.") if result['status'] == 'success' else st.error(f"Failed to unload '{model_name}': {result['message']}")
             st.rerun()
-    st.session_state.unload_after_response = st.checkbox("Unload models after response", value=st.session_state.unload_after_response, help="(Ollama only)", disabled=not is_ollama or st.session_state.generating)
-    if not is_ollama and st.session_state.unload_after_response: st.session_state.unload_after_response = False
+    st.session_state.unload_after_response = st.checkbox(
+        "Unload models after response",
+        value=st.session_state.unload_after_response,
+        help="(Ollama only)",
+        disabled=not is_ollama or st.session_state.generating
+    )
+    if not is_ollama and st.session_state.unload_after_response:
+        st.session_state.unload_after_response = False
+    # --- System Prompt Management ---
     st.subheader("System Prompt")
     prompt_names = list(st.session_state.system_prompts.keys())
     try: current_prompt_index = prompt_names.index(st.session_state.current_system_prompt_name) + 1
@@ -253,11 +292,14 @@ with st.sidebar:
             st.toast(f"Prompt '{prompt_save_name}' saved!", icon="✅"); st.rerun()
         else: st.warning("Please enter a name for the prompt before saving.")
     cm.save_config(st.session_state.config)
+    # --- Export Conversation ---
     st.subheader("Export Conversation")
     if st.session_state.messages:
-        col1, col2 = st.columns(2); chat_name = st.session_state.chat_id.replace(".json", "") if st.session_state.chat_id else f"conversation_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        col1, col2 = st.columns(2)
+        chat_name = st.session_state.chat_id.replace(".json", "") if st.session_state.chat_id else f"conversation_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         txt_data = "".join(f"--- {msg['role'].upper()} ---\n{msg.get('display_content', '')}\n\n" for msg in st.session_state.messages)
-        col1.download_button("to .txt", txt_data, f"{chat_name}.txt", "text/plain"); json_data = json.dumps(st.session_state.messages, indent=2)
+        col1.download_button("to .txt", txt_data, f"{chat_name}.txt", "text/plain")
+        json_data = json.dumps(st.session_state.messages, indent=2)
         col2.download_button("to .json", json_data, f"{chat_name}.json", "application/json")
     st.sidebar.divider(); st.sidebar.markdown("""- [My Website](https://eng.webphotogallery.store/i2p)\n- [GitHub Project Page](https://github.com/rorsaeed/image-to-prompt)""")
 
