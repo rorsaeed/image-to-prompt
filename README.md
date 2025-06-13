@@ -1,6 +1,6 @@
 # Image-to-Prompt AI Assistant
 
-This Python application provides a user-friendly interface to interact with local Large Language Models (LLMs) for generating text prompts from images or enhance simple prompt. It supports both **Ollama** and **LM Studio** as backends.
+This Python application provides a user-friendly interface to interact with local Large Language Models (LLMs) for generating text prompts from images or enhance simple prompt. It supports both **Ollama** , **LM Studio** and **Koboldcpp** as backends.
 
 ![Screenshot Placeholder](https://github.com/rorsaeed/image-to-prompt/blob/main/Screenshot.png)
 
