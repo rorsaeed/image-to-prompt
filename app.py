@@ -6,6 +6,7 @@ import uuid
 import copy 
 from datetime import datetime
 from pathlib import Path
+import html
 
 # --- Local Imports ---
 import config_manager as cm
@@ -364,21 +365,23 @@ if st.session_state.generating:
     run_generation_logic()
 else:
     st.subheader("Upload Images (Optional)")
-    uploaded_files_from_widget = st.file_uploader("Upload Images (Drag & Drop Supported)", type=["png", "jpg", "jpeg", "webp", "gif"], accept_multiple_files=True, key=st.session_state.uploader_key)
+    uploaded_files_from_widget = st.file_uploader(
+        "Upload image(s)", 
+        type=["png", "jpg", "jpeg", "webp"], 
+        accept_multiple_files=False,  # Only allow one image at a time
+        key=st.session_state.uploader_key
+    )
+
     if uploaded_files_from_widget:
-        if not st.session_state.uploaded_files:
-            st.session_state.uploaded_files = [save_uploaded_file(f) for f in uploaded_files_from_widget]
-        st.write("Attached images:")
-        cols = st.columns(len(st.session_state.uploaded_files))
-        for i, file_info in enumerate(st.session_state.uploaded_files):
-            with cols[i]:
-                st.image(str(file_info[0]), width=150)
-                with st.popover("View Full Size", use_container_width=True):
-                    st.image(str(file_info[0]))
-                st.caption(file_info[1])
-                # Add close button for uploaded image
-                if st.button("× Remove", key=f"remove_uploaded_{i}"):
-                    remove_uploaded_image(i)
+        # For single file upload, uploaded_files_from_widget is a file, not a list
+        st.session_state.uploaded_files = [save_uploaded_file(uploaded_files_from_widget)]
+    else:
+        st.session_state.uploaded_files = []
+
+    # Display only the latest image
+    if st.session_state.uploaded_files:
+        file_path, original_name = st.session_state.uploaded_files[0]
+        st.image(str(file_path), caption=original_name, width=200)
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.session_state.uploaded_files:
@@ -387,3 +390,25 @@ else:
     with col2:
         if prompt := st.chat_input("...or add a message and press Enter"):
             process_and_send_message(prompt_text=prompt, uploaded_file_info=st.session_state.uploaded_files)
+
+# --- CSS for code block wrapping ---
+st.markdown("""
+    <style>
+    /* Target code blocks inside Streamlit */
+    .stCode > div {
+        overflow-x: auto !important;
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+    }
+    .stCode code {
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Example: get your prompt text as before
+prompt_text = st.session_state.messages[-1]["content"] if st.session_state.messages else ""
+
+st.markdown("**Prompt:**")
+st.code(prompt_text, language=None)  # Shows a copy button with wrapping
