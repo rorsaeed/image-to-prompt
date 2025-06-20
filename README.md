@@ -56,7 +56,51 @@ Before running the application, you **MUST** have one of the following installed
 A great GGUF model for generating detailed prompts is available here:
 [bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF](https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF)
 
-## Installation & Usage (for Windows)
+
+
+## 🚀 First-Time Windows Setup (Easy Installer)
+
+This is the recommended method for most Windows users. This script will automatically install everything you need.
+
+1.  **Download the Installer:**
+    Go to the [**GitHub Releases Page**](https://github.com/rorsaeed/image-to-prompt/releases) and download the `Image-to-Prompt-Installer.zip` file from the latest release.
+
+2.  **Unzip the File:**
+    Right-click the downloaded `.zip` file and select "Extract All..." to unzip the folder.
+
+3.  **Run as Administrator:**
+    Open the unzipped folder, right-click on the `setup_everything.bat` file, and choose **"Run as administrator"**.
+
+
+4.  **Approve Permissions:**
+    Windows will ask for permission to run the script. Click **"Yes"**. A PowerShell window will open and begin the installation process.
+
+5.  **Wait for Installation:**
+    The script will automatically check for and install Git, Python, and LM Studio if they are missing. It will then download the application code and set up all the necessary Python packages. This may take several minutes.
+
+6.  **Follow Final Instructions:**
+    Once finished, the script will open the final installation folder (`C:\ImageToPromptApp`) and display a message with the next steps.
+
+---
+
+## ⚙️ How to Use the App
+
+After installation, follow these critical steps:
+
+1.  **Open LM Studio:** Search for it in your Windows Start Menu and open it.
+2.  **Download a Vision Model:** Inside LM Studio, use the search bar (🔍) to find and download a vision-capable GGUF model (e.g., search for `mlabonne_gemma-3-27b-it-abliterated-GGUF`).
+3.  **Start the Server:**
+    -   Go to the **Local Server** tab (`<->`).
+    -   At the top, ensure the **Server Preset** is set to **`OpenAI API`**.
+    -   Select the model you just downloaded.
+    -   Click **"Start Server"**.
+4.  **Run the App:**
+    -   Go to the application folder (`C:\ImageToPromptApp`).
+    -   Double-click the **`run.bat`** file. Your web browser will open with the application ready to use!
+
+
+
+## Second installation method if you have all the required applications (for Windows)
 
 1.  **Get the code from GitHub:**
     ```bash
