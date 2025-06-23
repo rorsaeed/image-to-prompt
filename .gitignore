@@ -1,1 +1,5 @@
 data/config.json
+venv
+__pycache__
+temp_images
+data/conversations
