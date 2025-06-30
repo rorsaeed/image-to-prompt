@@ -7,6 +7,7 @@ import copy
 from datetime import datetime
 from pathlib import Path
 import html
+import re
 
 # --- Local Imports ---
 import config_manager as cm
@@ -36,6 +37,10 @@ def init_session_state():
         st.session_state.generating = False
 
 init_session_state()
+
+def remove_thinking_tags(text):
+    """Removes <think>...</think> tags from a string."""
+    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
 
 # --- Helper & Chat Management Functions ---
 def save_uploaded_file(uploaded_file):
@@ -88,7 +93,11 @@ def run_generation_logic():
                     stream_generator = api_client.generate_chat_response(model=model, messages=messages_for_this_model, images=image_paths)
                     for chunk in stream_generator:
                         full_response += chunk
-                        message_placeholder.markdown(prefix + full_response + "▌")
+                        # Filter out thinking tags before displaying
+                        cleaned_response = remove_thinking_tags(full_response)
+                        message_placeholder.markdown(prefix + cleaned_response + "▌")
+                    # Final cleanup before saving
+                    full_response = remove_thinking_tags(full_response)
                     message_placeholder.markdown(prefix + full_response)
                 except Exception as e:
                     st.error(f"An error occurred with model {model}: {e}"); full_response = f"Error: {e}"
@@ -173,7 +182,11 @@ def regenerate_message(idx, container=None):
             stream_generator = api_client.generate_chat_response(model=model, messages=copy.deepcopy(api_messages), images=image_paths)
             for chunk in stream_generator:
                 full_response += chunk
-                message_placeholder.markdown(prefix + full_response + "▌")
+                # Filter out thinking tags before displaying
+                cleaned_response = remove_thinking_tags(full_response)
+                message_placeholder.markdown(prefix + cleaned_response + "▌")
+            # Final cleanup before saving
+            full_response = remove_thinking_tags(full_response)
             message_placeholder.markdown(prefix + full_response)
         except Exception as e:
             st.error(f"An error occurred with model {model}: {e}"); full_response = f"Error: {e}"
