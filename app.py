@@ -381,20 +381,39 @@ else:
     uploaded_files_from_widget = st.file_uploader(
         "Upload image(s)", 
         type=["png", "jpg", "jpeg", "webp"], 
-        accept_multiple_files=False,  # Only allow one image at a time
+        accept_multiple_files=True,  # Allow multiple images
         key=st.session_state.uploader_key
     )
 
     if uploaded_files_from_widget:
-        # For single file upload, uploaded_files_from_widget is a file, not a list
-        st.session_state.uploaded_files = [save_uploaded_file(uploaded_files_from_widget)]
-    else:
+        # Process multiple uploaded files
+        new_uploads = [save_uploaded_file(file) for file in uploaded_files_from_widget]
+        st.session_state.uploaded_files = new_uploads
+    elif not st.session_state.uploaded_files:
+        # Initialize to empty list if nothing uploaded and no existing files
         st.session_state.uploaded_files = []
-
-    # Display only the latest image
+    
+    # Display all uploaded images in a grid
     if st.session_state.uploaded_files:
-        file_path, original_name = st.session_state.uploaded_files[0]
-        st.image(str(file_path), caption=original_name, width=200)
+        num_images = len(st.session_state.uploaded_files)
+        cols_per_row = min(4, num_images)  # Maximum 4 images per row
+        
+        # Calculate how many rows we need
+        num_rows = (num_images + cols_per_row - 1) // cols_per_row
+        
+        # Create a grid to display images
+        for row in range(num_rows):
+            cols = st.columns(cols_per_row)
+            for col_idx in range(cols_per_row):
+                img_idx = row * cols_per_row + col_idx
+                if img_idx < num_images:
+                    file_path, original_name = st.session_state.uploaded_files[img_idx]
+                    with cols[col_idx]:
+                        st.image(str(file_path), caption=original_name, width=150)
+                        if st.button("×", key=f"remove_img_{img_idx}"):
+                            remove_uploaded_image(img_idx)
+                        with st.popover("View Full Size", use_container_width=True):
+                            st.image(str(file_path))
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.session_state.uploaded_files:
