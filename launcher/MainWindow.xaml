@@ -1,0 +1,30 @@
+﻿<Window
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:AiPromptAssistant"
+        xmlns:Wpf="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf" x:Class="AiPromptAssistant.MainWindow"
+        mc:Ignorable="d"
+
+        Title="Ai Prompt Assistant" Height="450" Width="800" Loaded="Window_Loaded" Closing="Window_Closing" WindowState="Maximized" Icon="/winicon.png">
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="_Exit" Click="MenuItem_Click_2" />
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="_About" Click="MenuItem_Click" />
+                <MenuItem Header="_More free Apps" Click="MenuItem_Click_1" />
+                <MenuItem Header="_Check for update" Click="MenuItem_Click_3" />
+            </MenuItem>
+        </Menu>
+
+        <Grid >
+
+            <Wpf:WebView2 x:Name="webView2"/>
+            <Label Content="Setting up the backend, the first run will take some time" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" FontSize="30" />
+        </Grid>
+    </DockPanel>
+
+</Window>
