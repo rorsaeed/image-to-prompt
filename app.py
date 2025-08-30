@@ -12,6 +12,7 @@ import re
 # --- Local Imports ---
 import config_manager as cm
 from api_client import APIClient
+from bulk_analyzer import bulk_analysis_page
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -315,13 +316,13 @@ with st.sidebar:
         col1.download_button("to .txt", txt_data, f"{chat_name}.txt", "text/plain")
         json_data = json.dumps(st.session_state.messages, indent=2)
         col2.download_button("to .json", json_data, f"{chat_name}.json", "application/json")
-    st.sidebar.divider(); st.sidebar.markdown("""- [My Website](https://eng.webphotogallery.store/i2p)\n- [GitHub Project Page](https://github.com/rorsaeed/image-to-prompt)""")
+    st.sidebar.divider(); st.sidebar.markdown("- [My Website](https://eng.webphotogallery.store/i2p)\n- [GitHub Project Page](https://github.com/rorsaeed/image-to-prompt)")
 
 # --- Custom CSS for transparent X buttons ---
 st.markdown(
     """
     <style>
-    button[data-testid="baseButton"]:has(div:contains('×')), 
+    button[data-testid="baseButton"]:has(div:contains('×')),
     button[data-testid="baseButton"]:has(span:contains('×')) {
         background: transparent !important;
         border: none !important;
@@ -346,82 +347,88 @@ st.markdown(
 st.title("🖼️ Image-to-Prompt AI Assistant")
 st.warning("**Important:** Ensure **LM Studio** or **Ollama** is running with the API server enabled and a vision model loaded.")
 
-# Create a list of containers for each message so we can update them in-place
-message_containers = []
-for idx, message in enumerate(st.session_state.messages):
-    container = st.container()
-    message_containers.append(container)
-    with container:
-        col_msg, col_btn, col_regen = st.columns([8, 1, 1])
-        with col_msg:
-            if "display_content" in message:
-                st.markdown(message["display_content"])
-            if "images" in message:
-                img_cols = st.columns(len(message["images"]))
-                for j, image_info in enumerate(message["images"]):
-                    with img_cols[j]:
-                        img_path = Path(image_info["path"])
-                        if img_path.exists():
-                            st.image(str(img_path), width=150)
-                            with st.popover("View Full Size", use_container_width=True):
-                                st.image(str(img_path))
-                            st.caption(image_info["name"])
-        with col_btn:
-            if st.button("×", key=f"remove_msg_{idx}", help="Delete this message"):
-                remove_message(idx)
-        with col_regen:
-            if message.get('role') == 'assistant':
-                if st.button("↻", key=f"regen_msg_{idx}", help="Regenerate this message"):
-                    regenerate_message(idx, message_containers[idx])
+tab1, tab2 = st.tabs(["Chat", "Bulk Analysis"])
 
-if st.session_state.generating:
-    run_generation_logic()
-else:
-    st.subheader("Upload Images (Optional)")
-    uploaded_files_from_widget = st.file_uploader(
-        "Upload image(s)", 
-        type=["png", "jpg", "jpeg", "webp"], 
-        accept_multiple_files=True,  # Allow multiple images
-        key=st.session_state.uploader_key
-    )
+with tab1:
+    # Create a list of containers for each message so we can update them in-place
+    message_containers = []
+    for idx, message in enumerate(st.session_state.messages):
+        container = st.container()
+        message_containers.append(container)
+        with container:
+            col_msg, col_btn, col_regen = st.columns([8, 1, 1])
+            with col_msg:
+                if "display_content" in message:
+                    st.markdown(message["display_content"])
+                if "images" in message:
+                    img_cols = st.columns(len(message["images"]))
+                    for j, image_info in enumerate(message["images"]):
+                        with img_cols[j]:
+                            img_path = Path(image_info["path"])
+                            if img_path.exists():
+                                st.image(str(img_path), width=150)
+                                with st.popover("View Full Size", use_container_width=True):
+                                    st.image(str(img_path))
+                                st.caption(image_info["name"])
+            with col_btn:
+                if st.button("×", key=f"remove_msg_{idx}", help="Delete this message"):
+                    remove_message(idx)
+            with col_regen:
+                if message.get('role') == 'assistant':
+                    if st.button("↻", key=f"regen_msg_{idx}", help="Regenerate this message"):
+                        regenerate_message(idx, message_containers[idx])
 
-    if uploaded_files_from_widget:
-        # Process multiple uploaded files
-        new_uploads = [save_uploaded_file(file) for file in uploaded_files_from_widget]
-        st.session_state.uploaded_files = new_uploads
-    elif not st.session_state.uploaded_files:
-        # Initialize to empty list if nothing uploaded and no existing files
-        st.session_state.uploaded_files = []
-    
-    # Display all uploaded images in a grid
-    if st.session_state.uploaded_files:
-        num_images = len(st.session_state.uploaded_files)
-        cols_per_row = min(4, num_images)  # Maximum 4 images per row
+    if st.session_state.generating:
+        run_generation_logic()
+    else:
+        st.subheader("Upload Images (Optional)")
+        uploaded_files_from_widget = st.file_uploader(
+            "Upload image(s)", 
+            type=["png", "jpg", "jpeg", "webp"],
+            accept_multiple_files=True,  # Allow multiple images
+            key=st.session_state.uploader_key
+        )
+
+        if uploaded_files_from_widget:
+            # Process multiple uploaded files
+            new_uploads = [save_uploaded_file(file) for file in uploaded_files_from_widget]
+            st.session_state.uploaded_files = new_uploads
+        elif not st.session_state.uploaded_files:
+            # Initialize to empty list if nothing uploaded and no existing files
+            st.session_state.uploaded_files = []
         
-        # Calculate how many rows we need
-        num_rows = (num_images + cols_per_row - 1) // cols_per_row
-        
-        # Create a grid to display images
-        for row in range(num_rows):
-            cols = st.columns(cols_per_row)
-            for col_idx in range(cols_per_row):
-                img_idx = row * cols_per_row + col_idx
-                if img_idx < num_images:
-                    file_path, original_name = st.session_state.uploaded_files[img_idx]
-                    with cols[col_idx]:
-                        st.image(str(file_path), caption=original_name, width=150)
-                        if st.button("×", key=f"remove_img_{img_idx}"):
-                            remove_uploaded_image(img_idx)
-                        with st.popover("View Full Size", use_container_width=True):
-                            st.image(str(file_path))
-    col1, col2 = st.columns([1, 4])
-    with col1:
+        # Display all uploaded images in a grid
         if st.session_state.uploaded_files:
-            if st.button("Analyze Image(s)"):
-                process_and_send_message(prompt_text="", uploaded_file_info=st.session_state.uploaded_files)
-    with col2:
-        if prompt := st.chat_input("...or add a message and press Enter"):
-            process_and_send_message(prompt_text=prompt, uploaded_file_info=st.session_state.uploaded_files)
+            num_images = len(st.session_state.uploaded_files)
+            cols_per_row = min(4, num_images)  # Maximum 4 images per row
+            
+            # Calculate how many rows we need
+            num_rows = (num_images + cols_per_row - 1) // cols_per_row
+            
+            # Create a grid to display images
+            for row in range(num_rows):
+                cols = st.columns(cols_per_row)
+                for col_idx in range(cols_per_row):
+                    img_idx = row * cols_per_row + col_idx
+                    if img_idx < num_images:
+                        file_path, original_name = st.session_state.uploaded_files[img_idx]
+                        with cols[col_idx]:
+                            st.image(str(file_path), caption=original_name, width=150)
+                            if st.button("×", key=f"remove_img_{img_idx}"):
+                                remove_uploaded_image(img_idx)
+                            with st.popover("View Full Size", use_container_width=True):
+                                st.image(str(file_path))
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.session_state.uploaded_files:
+                if st.button("Analyze Image(s)"):
+                    process_and_send_message(prompt_text="", uploaded_file_info=st.session_state.uploaded_files)
+        with col2:
+            if prompt := st.chat_input("...or add a message and press Enter"):
+                process_and_send_message(prompt_text=prompt, uploaded_file_info=st.session_state.uploaded_files)
+
+with tab2:
+    bulk_analysis_page()
 
 # --- CSS for code block wrapping ---
 st.markdown("""
@@ -434,10 +441,11 @@ st.markdown("""
     }
     .stCode code {
         white-space: pre-wrap !important;
-        word-break: break-word !important;
+        word-break: break-break-word !important;
     }
     </style>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True
+)
 
 # Example: get your prompt text as before
 prompt_text = st.session_state.messages[-1]["content"] if st.session_state.messages else ""
