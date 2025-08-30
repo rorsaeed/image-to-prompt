@@ -145,4 +145,4 @@ After installation, follow these critical steps:
 Your web browser will open with the application running. Configure the API provider, URL, and select your model(s) from the sidebar to begin.
 
 ## Updates
--   **2025-08-30:** Added a "Bulk Analysis" tab to analyze all images in a selected folder. You can now browse for a folder and optionally save the generated prompts to text files in the same directory.
+-   **2025-08-30:** Added a "Bulk Analysis" tab to analyze all images in a selected folder. You can now enter a folder path and optionally save the generated prompts to text files in the same directory.

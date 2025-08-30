@@ -4,16 +4,6 @@ import os
 from pathlib import Path
 import base64
 from api_client import APIClient
-import tkinter as tk
-from tkinter import filedialog
-
-def select_folder():
-    """Opens a folder selection dialog and returns the selected path."""
-    root = tk.Tk()
-    root.withdraw()
-    folder_path = filedialog.askdirectory()
-    root.destroy()
-    return folder_path
 
 def get_image_files(folder_path):
     """Gets all image files from a folder."""
@@ -26,22 +16,10 @@ def bulk_analysis_page():
 
     if "bulk_analysis_results" not in st.session_state:
         st.session_state.bulk_analysis_results = []
-    if "bulk_folder_path" not in st.session_state:
-        st.session_state.bulk_folder_path = ""
 
     # --- Folder Selection ---
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        folder_path = st.text_input("Enter the path to the folder containing images:", value=st.session_state.bulk_folder_path)
-    with col2:
-        st.write("\n")
-        if st.button("Browse"):
-            selected_path = select_folder()
-            if selected_path:
-                st.session_state.bulk_folder_path = selected_path
-                st.rerun()
+    folder_path = st.text_input("Enter the path to the folder containing images:")
 
-    folder_path = st.session_state.bulk_folder_path
     if folder_path and Path(folder_path).is_dir():
         image_files = get_image_files(folder_path)
         st.write(f"Found {len(image_files)} images in the folder.")
@@ -116,3 +94,4 @@ def bulk_analysis_page():
                     with cols[col_idx]:
                         st.image(result["image_path"], use_container_width=True)
                         st.text_area("Generated Prompt", value=result["prompt"], height=200, key=f"prompt_{img_idx}")
+
