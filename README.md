@@ -9,6 +9,7 @@ This Python application provides a user-friendly interface to interact with loca
 - **Multi-API Support**: Works with Ollama, LM Studio, and Koboldcpp APIs.
 - **Multi-Model Interaction**: Select and query multiple models simultaneously.
 - **Image-to-Prompt**: Upload images via file selector or drag-and-drop to generate descriptive prompts.
+- **Bulk Image Analysis**: Select a folder of images and analyze them all at once, with an option to save the generated prompts to text files.
 - **Model Management**: Unload models from memory (Ollama only) to free up VRAM.
 - **Custom System Prompts**: Define, save, and reuse custom system prompts, with the last one remembered.
 - **Conversation History**: Automatically saves your chats. Load, rename, or delete previous conversations.
@@ -142,3 +143,7 @@ After installation, follow these critical steps:
     ```
 
 Your web browser will open with the application running. Configure the API provider, URL, and select your model(s) from the sidebar to begin.
+
+## Updates
+-   **2025-08-31:** Add Advanced System Prompt Builder.
+-   **2025-08-30:** Added a "Bulk Analysis" tab to analyze all images in a selected folder. You can now enter a folder path and optionally save the generated prompts to text files in the same directory.
