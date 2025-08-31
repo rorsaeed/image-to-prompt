@@ -14,6 +14,71 @@ import config_manager as cm
 from api_client import APIClient
 from bulk_analyzer import bulk_analysis_page
 
+# --- Constants from joycaption ---
+CAPTION_TYPE_MAP = {
+	"Descriptive": [
+		"Write a detailed description for this image.",
+		"Write a detailed description for this image in {word_count} words or less.",
+		"Write a {length} detailed description for this image.",
+	],
+	"Descriptive (Casual)": [
+		"Write a descriptive caption for this image in a casual tone.",
+		"Write a descriptive caption for this image in a casual tone within {word_count} words.",
+		"Write a {length} descriptive caption for this image in a casual tone.",
+	],
+	"Straightforward": [
+		"Write a straightforward caption for this image. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with “This image is…” or similar phrasing.",
+		"Write a straightforward caption for this image within {word_count} words. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with “This image is…” or similar phrasing.",
+		"Write a {length} straightforward caption for this image. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with “This image is…” or similar phrasing.",
+	],
+	"Stable Diffusion Prompt": [
+		"Output a stable diffusion prompt that is indistinguishable from a real stable diffusion prompt.",
+		"Output a stable diffusion prompt that is indistinguishable from a real stable diffusion prompt. {word_count} words or less.",
+		"Output a {length} stable diffusion prompt that is indistinguishable from a real stable diffusion prompt.",
+	],
+	"MidJourney": [
+		"Write a MidJourney prompt for this image.",
+		"Write a MidJourney prompt for this image within {word_count} words.",
+		"Write a {length} MidJourney prompt for this image.",
+	],
+	"Danbooru tag list": [
+		"Generate only comma-separated Danbooru tags (lowercase_underscores). Strict order: `artist:`, `copyright:`, `character:`, `meta:`, then general tags. Include counts (1girl), appearance, clothing, accessories, pose, expression, actions, background. Use precise Danbooru syntax. No extra text.",
+		"Generate only comma-separated Danbooru tags (lowercase_underscores). Strict order: `artist:`, `copyright:`, `character:`, `meta:`, then general tags. Include counts (1girl), appearance, clothing, accessories, pose, expression, actions, background. Use precise Danbooru syntax. No extra text. {word_count} words or less.",
+		"Generate only comma-separated Danbooru tags (lowercase_underscores). Strict order: `artist:`, `copyright:`, `character:`, `meta:`, then general tags. Include counts (1girl), appearance, clothing, accessories, pose, expression, actions, background. Use precise Danbooru syntax. No extra text. {length} length.",
+	],
+	"e621 tag list": [
+		"Write a comma-separated list of e621 tags in alphabetical order for this image. Start with the artist, copyright, character, species, meta, and lore tags (if any), prefixed by 'artist:', 'copyright:', 'character:', 'species:', 'meta:', and 'lore:'. Then all the general tags.",
+		"Write a comma-separated list of e621 tags in alphabetical order for this image. Start with the artist, copyright, character, species, meta, and lore tags (if any), prefixed by 'artist:', 'copyright:', 'character:', 'species:', 'meta:', and 'lore:'. Then all the general tags. Keep it under {word_count} words.",
+		"Write a {length} comma-separated list of e621 tags in alphabetical order for this image. Start with the artist, copyright, character, species, meta, and lore tags (if any), prefixed by 'artist:', 'copyright:', 'character:', 'species:', 'meta:', and 'lore:'. Then all the general tags.",
+	],
+	"Rule34 tag list": [
+		"Write a comma-separated list of rule34 tags in alphabetical order for this image. Start with the artist, copyright, character, and meta tags (if any), prefixed by 'artist:', 'copyright:', 'character:', and 'meta:'. Then all the general tags.",
+		"Write a comma-separated list of rule34 tags in alphabetical order for this image. Start with the artist, copyright, character, and meta tags (if any), prefixed by 'artist:', 'copyright:', 'character:', and 'meta:'. Then all the general tags. Keep it under {word_count} words.",
+		"Write a {length} comma-separated list of rule34 tags in alphabetical order for this image. Start with the artist, copyright, character, and meta tags (if any), prefixed by 'artist:', 'copyright:', 'character:', and 'meta:'. Then all the general tags.",
+	],
+	"Booru-like tag list": [
+		"Write a list of Booru-like tags for this image.",
+		"Write a list of Booru-like tags for this image within {word_count} words.",
+		"Write a {length} list of Booru-like tags for this image.",
+	],
+	"Art Critic": [
+		"Analyze this image like an art critic would with information about its composition, style, symbolism, the use of color, light, any artistic movement it might belong to, etc.",
+		"Analyze this image like an art critic would with information about its composition, style, symbolism, the use of color, light, any artistic movement it might belong to, etc. Keep it within {word_count} words.",
+		"Analyze this image like an art critic would with information about its composition, style, symbolism, the use of color, light, any artistic movement it might belong to, etc. Keep it {length}.",
+	],
+	"Product Listing": [
+		"Write a caption for this image as though it were a product listing.",
+		"Write a caption for this image as though it were a product listing. Keep it under {word_count} words.",
+		"Write a {length} caption for this image as though it were a product listing.",
+	],
+	"Social Media Post": [
+		"Write a caption for this image as if it were being used for a social media post.",
+		"Write a caption for this image as if it were being used for a social media post. Limit the caption to {word_count} words.",
+		"Write a {length} caption for this image as if it were being used for a social media post.",
+	],
+}
+NAME_OPTION = "If there is a person/character in the image you must refer to them as {name}."
+
 # --- Page Configuration ---
 st.set_page_config(
     page_title="Image-to-Prompt AI Assistant",
@@ -206,6 +271,7 @@ def regenerate_message(idx, container=None):
         st.rerun()
 
 # --- Sidebar ---
+
 with st.sidebar:
     st.header("💬 Conversations")
     if st.button("➕ New Chat", use_container_width=True, on_click=start_new_chat): st.rerun()
@@ -285,16 +351,100 @@ with st.sidebar:
         st.session_state.unload_after_response = False
     # --- System Prompt Management ---
     st.subheader("System Prompt")
+
+    with st.expander("System Prompt Builder"):
+        st.header("System Prompt Builder")
+
+        caption_type = st.selectbox(
+            "Caption Type",
+            list(CAPTION_TYPE_MAP.keys()),
+            key="modal_caption_type"
+        )
+
+        caption_length = st.selectbox(
+            "Caption Length",
+            ["any", "very short", "short", "medium-length", "long", "very long"] + [str(i) for i in range(20, 261, 10)],
+            key="modal_caption_length"
+        )
+
+        st.markdown("**Extra Options**")
+        extra_options_keys = [
+            NAME_OPTION,
+            "Do NOT include information about people/characters that cannot be changed (like ethnicity, gender, etc), but do still include changeable attributes (like hair style).",
+            "Include information about lighting.",
+            "Include information about camera angle.",
+            "Include information about whether there is a watermark or not.",
+            "Include information about whether there are JPEG artifacts or not.",
+            "If it is a photo you MUST include information about what camera was likely used and details such as aperture, shutter speed, ISO, etc.",
+            "Do NOT include anything sexual; keep it PG.",
+            "Do NOT mention the image's resolution.",
+            "You MUST include information about the subjective aesthetic quality of the image from low to very high.",
+            "Include information on the image's composition style, such as leading lines, rule of thirds, or symmetry.",
+            "Do NOT mention any text that is in the image.",
+            "Specify the depth of field and whether the background is in focus or blurred.",
+            "If applicable, mention the likely use of artificial or natural lighting sources.",
+            "Do NOT use any ambiguous language.",
+            "Include whether the image is sfw, suggestive, or nsfw.",
+            "ONLY describe the most important elements of the image.",
+            "If it is a work of art, do not include the artist's name or the title of the work.",
+            "Identify the image orientation (portrait, landscape, or square) and aspect ratio if obvious.",
+            "Use vulgar slang and profanity, such as (but not limited to) \"fucking,\" \"slut,\" \"cock,\" etc.",
+            "Do NOT use polite euphemisms—lean into blunt, casual phrasing.",
+            "Include information about the ages of any people/characters when applicable.",
+            "Mention whether the image depicts an extreme close-up, close-up, medium close-up, medium shot, cowboy shot, medium wide shot, wide shot, or extreme wide shot.",
+            "Do not mention the mood/feeling/etc of the image.",
+            "Explicitly specify the vantage height (eye-level, low-angle worm’s-eye, bird’s-eye, drone, rooftop, etc.).",
+            "If there is a watermark, you must mention it.",
+            'Your response will be used by a text-to-image model, so avoid useless meta phrases like \“This image shows…\", \“You are looking at...\", etc.',
+        ]
+
+        extra_options_state = {}
+        for i, option in enumerate(extra_options_keys):
+            extra_options_state[option] = st.checkbox(option, key=f"modal_extra_option_{i}")
+
+        name_input = ""
+        if extra_options_state[NAME_OPTION]:
+            name_input = st.text_input("Person / Character Name", key="modal_name_input")
+
+        def build_prompt(caption_type: str, caption_length: str | int, extra_options: dict, name_input: str) -> str:
+            if caption_length == "any":
+                map_idx = 0
+            elif isinstance(caption_length, str) and caption_length.isdigit():
+                map_idx = 1
+            else:
+                map_idx = 2
+            
+            prompt = CAPTION_TYPE_MAP[caption_type][map_idx]
+
+            selected_options = [option for option, checked in extra_options.items() if checked]
+            if selected_options:
+                prompt += " " + " ".join(selected_options)
+            
+            return prompt.format(
+                name=name_input or "{NAME}",
+                length=caption_length,
+                word_count=caption_length,
+            )
+
+        if st.button("Generate and Apply Prompt", use_container_width=True):
+            st.session_state.current_system_prompt = build_prompt(caption_type, caption_length, extra_options_state, name_input)
+            st.rerun()
+
     prompt_names = list(st.session_state.system_prompts.keys())
-    try: current_prompt_index = prompt_names.index(st.session_state.current_system_prompt_name) + 1
-    except (ValueError, AttributeError): current_prompt_index = 0
+    try:
+        current_prompt_index = prompt_names.index(st.session_state.current_system_prompt_name) + 1
+    except (ValueError, AttributeError):
+        current_prompt_index = 0
+
     def on_prompt_change():
         selected_name = st.session_state.prompt_selector
         if selected_name != "New Custom Prompt":
             st.session_state.current_system_prompt_name = selected_name
             st.session_state.current_system_prompt = st.session_state.system_prompts[selected_name]
             st.session_state.config['last_system_prompt_name'] = selected_name
-        else: st.session_state.current_system_prompt_name = ""
+        else:
+            st.session_state.current_system_prompt_name = ""
+
     st.selectbox("Choose or create a prompt", options=["New Custom Prompt"] + prompt_names, index=current_prompt_index, on_change=on_prompt_change, key="prompt_selector", disabled=st.session_state.generating)
     st.session_state.current_system_prompt = st.text_area("System Prompt Content", value=st.session_state.current_system_prompt, height=200, key="system_prompt_text_area", disabled=st.session_state.generating)
     prompt_save_name = st.text_input("Enter name to save prompt:", value=st.session_state.get("current_system_prompt_name", ""), disabled=st.session_state.generating)
