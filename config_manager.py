@@ -56,7 +56,8 @@ def load_config():
     return {
         "selected_models": [],
         "api_provider": "Ollama",
-        "api_base_url": "http://localhost:11434"
+        "api_base_url": "http://localhost:11434",
+        "google_api_key": None
     }
 
 def save_config(config):

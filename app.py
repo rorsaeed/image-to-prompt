@@ -238,7 +238,7 @@ def regenerate_message(idx, container=None):
         image_paths = [Path(info['path']) for info in image_info]
         # Call the LLM for each selected model (regenerate only for the model of this message)
         model = msg.get('model', st.session_state.config['selected_models'][0])
-        api_client = APIClient(provider=st.session_state.config.get('api_provider', 'Ollama'), base_url=st.session_state.config.get('api_base_url', 'http://localhost:11434'))
+        api_client = APIClient(provider=st.session_state.config.get('api_provider', 'Ollama'), base_url=st.session_state.config.get('api_base_url', 'http://localhost:11434'), google_api_key=st.session_state.config.get('google_api_key'))
         target = container if container is not None else st
         message_placeholder = target.empty()
         prefix = f"**Response from `{model}`:**\n\n"
@@ -292,7 +292,7 @@ with st.sidebar:
                 cm.delete_conversation(st.session_state.chat_id); start_new_chat(); st.toast("Chat deleted!", icon="🗑️"); st.rerun()
     st.divider()
     st.header("⚙️ Configuration")
-    api_providers = ["Ollama", "LM Studio", "Koboldcpp"]
+    api_providers = ["Ollama", "LM Studio", "Koboldcpp", "Google"]
     current_provider = st.session_state.config.get("api_provider", "Ollama")
     st.session_state.config["api_provider"] = st.radio(
         "API Provider",
@@ -301,21 +301,42 @@ with st.sidebar:
         key="api_provider_selector",
         disabled=st.session_state.generating
     )
-    if st.session_state.config["api_provider"] == "Ollama":
+    if st.session_state.config["api_provider"] == "Google":
+        st.session_state.config["google_api_key"] = st.text_input(
+            "Google API Key",
+            value=st.session_state.config.get("google_api_key", ""),
+            key="google_api_key_input",
+            type="password",
+            disabled=st.session_state.generating
+        )
+    elif st.session_state.config["api_provider"] == "Ollama":
         default_url = "http://localhost:11434"
+        st.session_state.config["api_base_url"] = st.text_input(
+            "API Base URL",
+            value=st.session_state.config.get("api_base_url", default_url),
+            key="api_base_url_input",
+            disabled=st.session_state.generating
+        )
     elif st.session_state.config["api_provider"] == "LM Studio":
         default_url = "http://localhost:1234"
+        st.session_state.config["api_base_url"] = st.text_input(
+            "API Base URL",
+            value=st.session_state.config.get("api_base_url", default_url),
+            key="api_base_url_input",
+            disabled=st.session_state.generating
+        )
     else:  # Koboldcpp
         default_url = "http://localhost:5001"
-    st.session_state.config["api_base_url"] = st.text_input(
-        "API Base URL",
-        value=st.session_state.config.get("api_base_url", default_url),
-        key="api_base_url_input",
-        disabled=st.session_state.generating
-    )
+        st.session_state.config["api_base_url"] = st.text_input(
+            "API Base URL",
+            value=st.session_state.config.get("api_base_url", default_url),
+            key="api_base_url_input",
+            disabled=st.session_state.generating
+        )
     api_client = APIClient(
         provider=st.session_state.config["api_provider"],
-        base_url=st.session_state.config["api_base_url"]
+        base_url=st.session_state.config.get("api_base_url"),
+        google_api_key=st.session_state.config.get("google_api_key")
     )
     with st.spinner("Fetching available models..."):
         available_models = api_client.get_available_models()
@@ -495,7 +516,7 @@ st.markdown(
 
 # --- Main Application Area ---
 st.title("🖼️ Image-to-Prompt AI Assistant")
-st.warning("**Important:** Ensure **LM Studio** or **Ollama** is running with the API server enabled and a vision model loaded.")
+st.warning("**Important:** For local models, ensure **LM Studio** or **Ollama** is running with the API server enabled and a vision model loaded. For Google, ensure you have entered a valid API key.")
 
 tab1, tab2 = st.tabs(["Chat", "Bulk Analysis"])
 

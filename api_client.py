@@ -7,12 +7,16 @@ from pathlib import Path
 class APIClient:
     """A client for interacting with local LLM APIs (Ollama, LM Studio, and Koboldcpp)."""
     
-    def __init__(self, provider="Ollama", base_url="http://localhost:11434"):
+    def __init__(self, provider="Ollama", base_url="http://localhost:11434", google_api_key=None):
         self.provider = provider
         self.base_url = base_url.rstrip('/')
+        self.google_api_key = google_api_key
         if self.provider in ("LM Studio", "Koboldcpp"):
             self.api_endpoint = f"{self.base_url}/v1/chat/completions"
             self.models_endpoint = f"{self.base_url}/v1/models"
+        elif self.provider == "Google":
+            self.api_endpoint = "https://generativelanguage.googleapis.com/v1beta/models"
+            self.models_endpoint = "" # Not used for Google
         else:  # Ollama
             self.api_endpoint = f"{self.base_url}/api/chat"
             self.models_endpoint = f"{self.base_url}/api/tags"
@@ -20,6 +24,8 @@ class APIClient:
 
     def get_available_models(self):
         """Fetches the list of available models from the API."""
+        if self.provider == "Google":
+            return ["gemini-1.5-flash-latest", "gemini-2.0-flash", "gemini-2.5-flash"]
         try:
             response = requests.get(self.models_endpoint, timeout=10)
             response.raise_for_status()
@@ -56,6 +62,80 @@ class APIClient:
         """
         headers = {"Content-Type": "application/json"}
         
+        if self.provider == "Google":
+            if not self.google_api_key:
+                yield "--- \n**API Key Error:**\n\n`Google API key is not set.`"
+                return
+
+            # Translate messages to Google format
+            contents = []
+            for msg in messages:
+                role = "user" if msg['role'] == "user" else "model"
+                # Handle the case where the last message has images
+                if msg['role'] == 'user' and images:
+                    parts = [{"text": msg['content']}]
+                    for img_path in images:
+                        # In-line data is preferred for Google API
+                        mime_type = "image/jpeg" # Assuming jpeg, adjust if needed
+                        parts.append({
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": self._encode_image(img_path)
+                            }
+                        })
+                    contents.append({"role": role, "parts": parts})
+                    images = None # Ensure images are only processed once
+                else:
+                    contents.append({"role": role, "parts": [{"text": msg['content']}]})
+
+            payload = {
+                "contents": contents,
+                "generationConfig": {
+                    "temperature": 0.9,
+                    "topK": 1,
+                    "topP": 1,
+                    "maxOutputTokens": 2048,
+                    "stopSequences": []
+                }
+            }
+            
+            params = {"key": self.google_api_key}
+            if stream:
+                params['alt'] = 'sse'
+
+            raw_response_for_debugging = ""
+            try:
+                with requests.post(f"{self.api_endpoint}/{model}:generateContent", headers=headers, json=payload, params=params, stream=stream, timeout=300) as response:
+                    response.raise_for_status()
+                    if stream:
+                        for line in response.iter_lines():
+                            if line:
+                                decoded_line = line.decode('utf-8')
+                                if decoded_line.startswith('data: '):
+                                    json_str = decoded_line[6:].strip()
+                                    try:
+                                        chunk = json.loads(json_str)
+                                        content = chunk['candidates'][0]['content']['parts'][0]['text']
+                                        if content:
+                                            yield content
+                                    except (json.JSONDecodeError, KeyError, IndexError):
+                                        continue # Ignore malformed SSE data
+                    else: # Not streaming
+                        data = response.json()
+                        content = data['candidates'][0]['content']['parts'][0]['text']
+                        if content:
+                            yield content
+
+            except requests.exceptions.RequestException as e:
+                yield f"--- \n**API Connection Error:**\n\n`{e}`"
+            except json.JSONDecodeError as e:
+                yield (
+                    f"--- \n**API Error: Failed to decode the server's response.**\n\n"
+                    f"**Python Error:** `{e}`\n\n"
+                    f"**Full raw response from server:**\n\n```\n{raw_response_for_debugging or 'Response was empty.'}\n```"
+                )
+            return
+
         if images and messages and messages[-1]['role'] == 'user':
             last_message = messages[-1]
             if self.provider in ("LM Studio", "Koboldcpp"):
