@@ -50,15 +50,71 @@ def ensure_data_dirs():
 def load_config():
     """Loads user configuration from a JSON file."""
     ensure_data_dirs()
+
+    default_config = {
+        "api_provider": "Ollama",
+        "google_api_key": None,
+        "providers": {
+            "Ollama": {
+                "api_base_url": "http://localhost:11434",
+                "selected_models": []
+            },
+            "Google": {
+                "api_base_url": "https://generativelanguage.googleapis.com",
+                "selected_models": []
+            },
+            "LM Studio": { # Add LM Studio defaults
+                "api_base_url": "http://localhost:1234",
+                "selected_models": []
+            },
+            "Koboldcpp": { # Add Koboldcpp defaults
+                "api_base_url": "http://localhost:5001",
+                "selected_models": []
+            }
+        }
+    }
+
+    config = {}
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, 'r') as f:
-            return json.load(f)
-    return {
-        "selected_models": [],
-        "api_provider": "Ollama",
-        "api_base_url": "http://localhost:11434",
-        "google_api_key": None
-    }
+            try:
+                config = json.load(f)
+            except json.JSONDecodeError:
+                # Handle corrupted or empty config file
+                print(f"Warning: Could not decode {CONFIG_PATH}. Using default configuration.")
+                config = {}
+
+    # Migrate old config format to new providers structure if necessary
+    if "api_base_url" in config and "providers" not in config:
+        config["providers"] = {
+            "Ollama": {
+                "api_base_url": config.get("api_base_url", default_config["providers"]["Ollama"]["api_base_url"]),
+                "selected_models": config.get("selected_models", default_config["providers"]["Ollama"]["selected_models"])
+            },
+            "Google": default_config["providers"]["Google"],
+            "LM Studio": default_config["providers"]["LM Studio"], # Ensure these are added
+            "Koboldcpp": default_config["providers"]["Koboldcpp"] # Ensure these are added
+        }
+        config.pop("api_base_url", None)
+        config.pop("selected_models", None)
+
+    # Merge with defaults to ensure all keys and provider sub-keys are present
+    # This handles cases where new providers are added or sub-keys are missing
+    final_config = default_config.copy() # Start with a full default config
+    final_config.update(config) # Overlay existing config
+
+    # Deep merge for the 'providers' dictionary
+    if "providers" in config and isinstance(config["providers"], dict):
+        for provider_name, provider_defaults in default_config["providers"].items():
+            if provider_name not in final_config["providers"]:
+                final_config["providers"][provider_name] = provider_defaults
+            else:
+                # Merge individual provider settings
+                for key, value in provider_defaults.items():
+                    if key not in final_config["providers"][provider_name]:
+                        final_config["providers"][provider_name][key] = value
+    
+    return final_config
 
 def save_config(config):
     """Saves user configuration to a JSON file."""

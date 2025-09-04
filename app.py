@@ -97,7 +97,7 @@ def init_session_state():
         st.session_state.current_system_prompt = st.session_state.system_prompts.get(last_prompt_name, st.session_state.system_prompts.get("Default Image-to-Prompt", ""))
         st.session_state.current_system_prompt_name = last_prompt_name
     if "uploaded_files" not in st.session_state: st.session_state.uploaded_files = []
-    if "unload_after_response" not in st.session_state: st.session_state.unload_after_response = False
+    
     if "uploader_key" not in st.session_state: st.session_state.uploader_key = str(uuid.uuid4())
     if "generating" not in st.session_state:
         st.session_state.generating = False
@@ -147,7 +147,7 @@ def run_generation_logic():
         for msg in st.session_state.messages:
             if msg['role'] != 'system': api_messages.append({"role": msg["role"], "content": msg["content"]})
         
-        for model in st.session_state.config["selected_models"]:
+        for model in st.session_state.config["providers"][st.session_state.config["api_provider"]]["selected_models"]:
             with st.chat_message("assistant"):
                 message_placeholder = st.empty()
                 prefix = f"**Response from `{model}`:**\n\n"
@@ -175,18 +175,15 @@ def run_generation_logic():
                 auto_save_chat()
 
     finally:
-        if st.session_state.get("unload_after_response", False) and st.session_state.config["api_provider"] == "Ollama":
-            with st.spinner("Unloading models from memory..."):
-                for model in st.session_state.config["selected_models"]: api_client.unload_model(model)
-            st.toast("Models unloaded from memory.", icon="✅")
-        
         st.session_state.generating = False
         # <<< CHANGE: The lines that cleared uploaded_files and reset the uploader_key have been REMOVED >>>
         # This makes the uploaded images persist for re-analysis.
         st.rerun()
 
 def process_and_send_message(prompt_text, uploaded_file_info):
-    if not st.session_state.config["selected_models"]: st.error("Please select at least one model from the sidebar."); return
+    current_provider_name = st.session_state.config.get("api_provider", "Ollama") # Get current provider
+    selected_models = st.session_state.config["providers"].get(current_provider_name, {}).get("selected_models", [])
+    if not selected_models: st.error("Please select at least one model from the sidebar."); return
 
     image_info_for_message = [{"path": str(info[0]), "name": info[1]} for info in uploaded_file_info]
     is_image_only_request = not prompt_text.strip()
@@ -237,8 +234,8 @@ def regenerate_message(idx, container=None):
         image_info = user_msg.get('images', [])
         image_paths = [Path(info['path']) for info in image_info]
         # Call the LLM for each selected model (regenerate only for the model of this message)
-        model = msg.get('model', st.session_state.config['selected_models'][0])
-        api_client = APIClient(provider=st.session_state.config.get('api_provider', 'Ollama'), base_url=st.session_state.config.get('api_base_url', 'http://localhost:11434'), google_api_key=st.session_state.config.get('google_api_key'))
+        model = msg.get('model', st.session_state.config['providers'][st.session_state.config['api_provider']]['selected_models'][0])
+        api_client = APIClient(provider=st.session_state.config['api_provider'], base_url=st.session_state.config['providers'][st.session_state.config['api_provider']]['api_base_url'] if st.session_state.config['api_provider'] != 'Google' else None, google_api_key=st.session_state.config.get('google_api_key') if st.session_state.config['api_provider'] == 'Google' else None)
         target = container if container is not None else st
         message_placeholder = target.empty()
         prefix = f"**Response from `{model}`:**\n\n"
@@ -299,77 +296,81 @@ with st.sidebar:
         api_providers,
         index=api_providers.index(current_provider) if current_provider in api_providers else 0,
         key="api_provider_selector",
-        disabled=st.session_state.generating
+        disabled=st.session_state.generating,
+        on_change=lambda: cm.save_config(st.session_state.config) # Save config on provider change
     )
-    if st.session_state.config["api_provider"] == "Google":
+
+    # Get current provider's specific config
+    current_provider_name = st.session_state.config["api_provider"]
+    provider_config = st.session_state.config["providers"].setdefault(current_provider_name, {"api_base_url": "", "selected_models": []})
+
+    if current_provider_name == "Google":
         st.session_state.config["google_api_key"] = st.text_input(
             "Google API Key",
             value=st.session_state.config.get("google_api_key", ""),
             key="google_api_key_input",
             type="password",
-            disabled=st.session_state.generating
+            disabled=st.session_state.generating,
+            on_change=lambda: cm.save_config(st.session_state.config)
         )
-    elif st.session_state.config["api_provider"] == "Ollama":
-        default_url = "http://localhost:11434"
-        st.session_state.config["api_base_url"] = st.text_input(
+    else:
+        default_urls = {
+            "Ollama": "http://localhost:11434",
+            "LM Studio": "http://localhost:1234",
+            "Koboldcpp": "http://localhost:5001"
+        }
+        # Use the saved URL for the current provider, or its default if not set
+        current_api_base_url = provider_config.get("api_base_url", default_urls.get(current_provider_name, ""))
+        provider_config["api_base_url"] = st.text_input(
             "API Base URL",
-            value=st.session_state.config.get("api_base_url", default_url),
-            key="api_base_url_input",
-            disabled=st.session_state.generating
+            value=current_api_base_url,
+            key=f"api_base_url_input_{current_provider_name}", # Unique key for each provider
+            disabled=st.session_state.generating,
+            on_change=lambda: cm.save_config(st.session_state.config)
         )
-    elif st.session_state.config["api_provider"] == "LM Studio":
-        default_url = "http://localhost:1234"
-        st.session_state.config["api_base_url"] = st.text_input(
-            "API Base URL",
-            value=st.session_state.config.get("api_base_url", default_url),
-            key="api_base_url_input",
-            disabled=st.session_state.generating
-        )
-    else:  # Koboldcpp
-        default_url = "http://localhost:5001"
-        st.session_state.config["api_base_url"] = st.text_input(
-            "API Base URL",
-            value=st.session_state.config.get("api_base_url", default_url),
-            key="api_base_url_input",
-            disabled=st.session_state.generating
-        )
+        if current_provider_name == "Ollama":
+            current_keep_alive = provider_config.get("keep_alive", -1) # Default to -1 (server default)
+            provider_config["keep_alive"] = st.number_input(
+                "Keep Alive (seconds, -1 for server default, 0 for no cache)",
+                min_value=-1,
+                value=current_keep_alive,
+                key=f"ollama_keep_alive_{current_provider_name}",
+                disabled=st.session_state.generating,
+                on_change=lambda: cm.save_config(st.session_state.config)
+            )
+    
+    # Instantiate APIClient with current provider's settings
     api_client = APIClient(
-        provider=st.session_state.config["api_provider"],
-        base_url=st.session_state.config.get("api_base_url"),
-        google_api_key=st.session_state.config.get("google_api_key")
+        provider=current_provider_name,
+        base_url=provider_config["api_base_url"] if current_provider_name != "Google" else None,
+        google_api_key=st.session_state.config.get("google_api_key") if current_provider_name == "Google" else None,
+        ollama_keep_alive=provider_config.get("keep_alive") if current_provider_name == "Ollama" else None # Pass keep_alive
     )
+
     with st.spinner("Fetching available models..."):
         available_models = api_client.get_available_models()
+
     if not available_models:
         st.error("Could not connect or no models found.")
     else:
-        saved_selection = st.session_state.config.get("selected_models", [])
+        # Use the saved selected models for the current provider
+        saved_selection = provider_config.get("selected_models", [])
         valid_selection = [model for model in saved_selection if model in available_models]
-        st.session_state.config["selected_models"] = st.multiselect(
+        
+        # Update the selected_models for the current provider
+        provider_config["selected_models"] = st.multiselect(
             "Select Model(s)",
             options=available_models,
             default=valid_selection,
-            disabled=st.session_state.generating
+            key=f"selected_models_multiselect_{current_provider_name}", # Unique key
+            disabled=st.session_state.generating,
+            on_change=lambda: cm.save_config(st.session_state.config)
         )
+
     st.subheader("Model Management")
-    is_ollama = st.session_state.config["api_provider"] == "Ollama"
-    if st.button("Unload Selected Models", disabled=not is_ollama or st.session_state.generating):
-        if not st.session_state.config["selected_models"]:
-            st.warning("No models selected to unload.")
-        else:
-            for model_name in st.session_state.config["selected_models"]:
-                with st.spinner(f"Unloading {model_name}..."):
-                    result = api_client.unload_model(model_name)
-                st.success(f"Successfully unloaded '{model_name}'.") if result['status'] == 'success' else st.error(f"Failed to unload '{model_name}': {result['message']}")
-            st.rerun()
-    st.session_state.unload_after_response = st.checkbox(
-        "Unload models after response",
-        value=st.session_state.unload_after_response,
-        help="(Ollama only)",
-        disabled=not is_ollama or st.session_state.generating
-    )
-    if not is_ollama and st.session_state.unload_after_response:
-        st.session_state.unload_after_response = False
+    is_ollama = current_provider_name == "Ollama"
+    
+    
     # --- System Prompt Management ---
     st.subheader("System Prompt")
 
