@@ -66,7 +66,8 @@ def load_config():
             },
             "LM Studio": { # Add LM Studio defaults
                 "api_base_url": "http://localhost:1234",
-                "selected_models": []
+                "selected_models": [],
+                "unload_after_response": False
             },
             "Koboldcpp": { # Add Koboldcpp defaults
                 "api_base_url": "http://localhost:5001",
