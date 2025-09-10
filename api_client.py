@@ -63,34 +63,67 @@ class APIClient:
                 yield "--- \n**API Key Error:**\n\n`Google API key is not set.`"
                 return
 
-            # Translate messages to Google format
-            contents = []
+            # --- Google API Payload Translation ---
+            # 1. Separate system prompt and regular messages
+            system_prompt = ""
+            regular_messages = []
             for msg in messages:
+                if msg['role'] == 'system':
+                    system_prompt = msg.get('content', '')
+                else:
+                    regular_messages.append(msg)
+
+            # 2. Prepend system prompt to the first user message
+            if system_prompt and regular_messages and regular_messages[0]['role'] == 'user':
+                regular_messages[0]['content'] = f"{system_prompt}\n\n{regular_messages[0]['content']}"
+            
+            # 3. Merge consecutive messages and handle images
+            merged_contents = []
+            current_role = None
+            current_parts = []
+
+            for msg in regular_messages:
                 role = "user" if msg['role'] == "user" else "model"
-                # Handle the case where the last message has images
+                
+                # If role changes, finalize the previous entry
+                if role != current_role and current_role is not None:
+                    merged_contents.append({"role": current_role, "parts": current_parts})
+                    current_parts = []
+                
+                current_role = role
+                
+                # Add text part
+                if msg.get('content'):
+                    current_parts.append({"text": msg['content']})
+
+                # Add image parts (only for the last user message)
                 if msg['role'] == 'user' and images:
-                    parts = [{"type": "text", "text": msg['content']}]
                     for img_path in images:
-                        # In-line data is preferred for Google API
-                        mime_type = "image/jpeg" # Assuming jpeg, adjust if needed
-                        parts.append({
+                        mime_type = f"image/{img_path.suffix.lstrip('.')}" 
+                        current_parts.append({
                             "inline_data": {
                                 "mime_type": mime_type,
                                 "data": self._encode_image(img_path)
                             }
                         })
-                    contents.append({"role": role, "parts": parts})
-                    images = None # Ensure images are only processed once
-                else:
-                    contents.append({"role": role, "parts": [{"text": msg['content']}]})
+                    images = None # Process images only once
+
+            # Add the last pending message
+            if current_role and current_parts:
+                merged_contents.append({"role": current_role, "parts": current_parts})
+
+            # 4. Ensure the conversation starts with a 'user' role
+            if merged_contents and merged_contents[0]['role'] != 'user':
+                 # If the first message is from the model, add a dummy user message
+                merged_contents.insert(0, {"role": "user", "parts": [{"text": "(Previous context)"}]})
 
             payload = {
-                "contents": contents,
+                "contents": merged_contents,
                 "generationConfig": {
                     "temperature": 0.9,
                     "topK": 1,
                     "topP": 1,
-                    "maxOutputTokens": 2048,
+                    "maxOutputTokens": 8192, # Increased token limit
                     "stopSequences": []
                 }
             }
@@ -111,13 +144,27 @@ class APIClient:
                                     json_str = decoded_line[6:].strip()
                                     try:
                                         chunk = json.loads(json_str)
+                                        # Check for safety ratings and blocked prompts
+                                        if chunk.get('promptFeedback', {}).get('blockReason'):
+                                            reason = chunk['promptFeedback']['blockReason']
+                                            yield f"\n--- \n**Content Moderation Error:**\n\n`The request was blocked due to: {reason}`"
+                                            return
+                                        if not chunk.get('candidates'):
+                                            continue # Skip empty chunks
+
                                         content = chunk['candidates'][0]['content']['parts'][0]['text']
                                         if content:
                                             yield content
-                                    except (json.JSONDecodeError, KeyError, IndexError):
-                                        continue # Ignore malformed SSE data
+                                    except (json.JSONDecodeError, KeyError, IndexError) as e:
+                                        # This can happen with malformed SSE data or unexpected structures
+                                        print(f"SSE parsing error: {e}\nLine: {json_str}")
+                                        continue 
                     else: # Not streaming
                         data = response.json()
+                        if data.get('promptFeedback', {}).get('blockReason'):
+                            reason = data['promptFeedback']['blockReason']
+                            yield f"\n--- \n**Content Moderation Error:**\n\n`The request was blocked due to: {reason}`"
+                            return
                         content = data['candidates'][0]['content']['parts'][0]['text']
                         if content:
                             yield content
