@@ -27,9 +27,9 @@ CAPTION_TYPE_MAP = {
 		"Write a {length} descriptive caption for this image in a casual tone.",
 	],
 	"Straightforward": [
-		"Write a straightforward caption for this image. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with “This image is…” or similar phrasing.",
-		"Write a straightforward caption for this image within {word_count} words. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with “This image is…” or similar phrasing.",
-		"Write a {length} straightforward caption for this image. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with “This image is…” or similar phrasing.",
+		"Write a straightforward caption for this image. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with \"This image is...\" or similar phrasing.",
+		"Write a straightforward caption for this image within {word_count} words. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with \"This image is...\" or similar phrasing.",
+		"Write a {length} straightforward caption for this image. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with \"This image is...\" or similar phrasing.",
 	],
 	"Stable Diffusion Prompt": [
 		"Output a stable diffusion prompt that is indistinguishable from a real stable diffusion prompt.",
@@ -235,7 +235,12 @@ def regenerate_message(idx, container=None):
         image_paths = [Path(info['path']) for info in image_info]
         # Call the LLM for each selected model (regenerate only for the model of this message)
         model = msg.get('model', st.session_state.config['providers'][st.session_state.config['api_provider']]['selected_models'][0])
-        api_client = APIClient(provider=st.session_state.config['api_provider'], base_url=st.session_state.config['providers'][st.session_state.config['api_provider']]['api_base_url'] if st.session_state.config['api_provider'] != 'Google' else None, google_api_key=st.session_state.config.get('google_api_key') if st.session_state.config['api_provider'] == 'Google' else None)
+        api_client = APIClient(
+            provider=st.session_state.config['api_provider'], 
+            base_url=st.session_state.config['providers'][st.session_state.config['api_provider']]['api_base_url'] if st.session_state.config['api_provider'] != 'Google' else None, 
+            google_api_key=st.session_state.config.get('google_api_key') if st.session_state.config['api_provider'] == 'Google' else None,
+            unload_after_response=st.session_state.config['providers'][st.session_state.config['api_provider']].get("unload_after_response", False) if st.session_state.config['api_provider'] == 'LM Studio' else False
+        )
         target = container if container is not None else st
         message_placeholder = target.empty()
         prefix = f"**Response from `{model}`:**\n\n"
@@ -328,6 +333,14 @@ with st.sidebar:
             disabled=st.session_state.generating,
             on_change=lambda: cm.save_config(st.session_state.config)
         )
+        if current_provider_name == "LM Studio":
+            provider_config["unload_after_response"] = st.checkbox(
+                "Unload model after response",
+                value=provider_config.get("unload_after_response", False),
+                key=f"unload_after_response_checkbox_{current_provider_name}",
+                disabled=st.session_state.generating,
+                on_change=lambda: cm.save_config(st.session_state.config)
+            )
         if current_provider_name == "Ollama":
             current_keep_alive = provider_config.get("keep_alive", -1) # Default to -1 (server default)
             provider_config["keep_alive"] = st.number_input(
@@ -342,9 +355,10 @@ with st.sidebar:
     # Instantiate APIClient with current provider's settings
     api_client = APIClient(
         provider=current_provider_name,
-        base_url=provider_config["api_base_url"] if current_provider_name != "Google" else None,
+        base_url=provider_config.get("api_base_url") if current_provider_name != "Google" else None,
         google_api_key=st.session_state.config.get("google_api_key") if current_provider_name == "Google" else None,
-        ollama_keep_alive=provider_config.get("keep_alive") if current_provider_name == "Ollama" else None # Pass keep_alive
+        ollama_keep_alive=provider_config.get("keep_alive") if current_provider_name == "Ollama" else None, # Pass keep_alive
+        unload_after_response=provider_config.get("unload_after_response", False) if current_provider_name == "LM Studio" else False
     )
 
     with st.spinner("Fetching available models..."):
@@ -494,8 +508,8 @@ with st.sidebar:
 st.markdown(
     """
     <style>
-    button[data-testid="baseButton"]:has(div:contains('×')),
-    button[data-testid="baseButton"]:has(span:contains('×')) {
+    button[data-testid=\"baseButton\"]:has(div:contains('×')),
+    button[data-testid=\"baseButton\"]:has(span:contains('×')) {
         background: transparent !important;
         border: none !important;
         box-shadow: none !important;
@@ -505,8 +519,8 @@ st.markdown(
         margin: 0;
         transition: color 0.2s;
     }
-    button[data-testid="baseButton"]:has(div:contains('×')):hover, 
-    button[data-testid="baseButton"]:has(span:contains('×')):hover {
+    button[data-testid=\"baseButton\"]:has(div:contains('×')):hover, 
+    button[data-testid=\"baseButton\"]:has(span:contains('×')):hover {
         color: #000 !important;
         background: transparent !important;
     }
