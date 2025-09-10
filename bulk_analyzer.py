@@ -29,19 +29,30 @@ def bulk_analysis_page():
             save_prompts = st.checkbox("Save prompts to text file (in the same folder)")
             
             if st.button("Analyze All Images", use_container_width=True):
-                if not st.session_state.config["selected_models"]:
-                    st.error("Please select at least one model from the sidebar.")
+                current_provider_name = st.session_state.config.get("api_provider", "Ollama")
+                provider_config = st.session_state.config["providers"].get(current_provider_name, {})
+                selected_models = provider_config.get("selected_models", [])
+
+                if not selected_models:
+                    st.error("Please select at least one model from the sidebar configuration.")
                     return
 
                 st.session_state.bulk_analysis_results = []
+                
+                # Instantiate APIClient with the correct provider-specific settings
                 api_client = APIClient(
-                    provider=st.session_state.config["api_provider"],
-                    base_url=st.session_state.config["api_base_url"]
+                    provider=current_provider_name,
+                    base_url=provider_config.get("api_base_url") if current_provider_name != "Google" else None,
+                    google_api_key=st.session_state.config.get("google_api_key") if current_provider_name == "Google" else None,
+                    ollama_keep_alive=provider_config.get("keep_alive") if current_provider_name == "Ollama" else None,
+                    unload_after_response=provider_config.get("unload_after_response", False) if current_provider_name == "LM Studio" else False
                 )
                 
                 progress_bar = st.progress(0)
+                model_to_use = selected_models[0] # Use the first selected model for bulk analysis
+
                 for i, image_path in enumerate(image_files):
-                    with st.spinner(f"Analyzing {image_path.name}..."):
+                    with st.spinner(f"Analyzing {image_path.name} using {model_to_use}..."):
                         try:
                             messages = [
                                 {"role": "system", "content": st.session_state.current_system_prompt},
@@ -50,7 +61,7 @@ def bulk_analysis_page():
                             
                             full_response = ""
                             stream_generator = api_client.generate_chat_response(
-                                model=st.session_state.config["selected_models"][0], # Use the first selected model
+                                model=model_to_use,
                                 messages=messages,
                                 images=[image_path]
                             )
