@@ -219,9 +219,17 @@ class APIClient:
                                     continue
                                 try:
                                     chunk = json.loads(json_str)
-                                    content = chunk['choices'][0]['delta'].get('content', '')
-                                    if content:
-                                        yield content
+                                    if 'choices' in chunk and chunk['choices']:
+                                        content = chunk['choices'][0]['delta'].get('content', '')
+                                        if content:
+                                            yield content
+                                    elif 'error' in chunk:
+                                        error_message = chunk.get('error', {}).get('message', json.dumps(chunk))
+                                        yield f"\n--- \n**API Error:**\n\n`{error_message}`"
+
+                                except json.JSONDecodeError:
+                                    # In case of malformed JSON, just continue
+                                    continue
                                 except Exception:
                                     continue
                 else:
@@ -235,13 +243,19 @@ class APIClient:
                                     break
                                 if not json_str:
                                     continue
-                                chunk = json.loads(json_str)
-                                if self.provider == "LM Studio":
-                                    content = chunk['choices'][0]['delta'].get('content', '')
-                                else: # Ollama
-                                    content = chunk['message'].get('content', '')
-                                if content:
-                                    yield content
+                                try:
+                                    chunk = json.loads(json_str)
+                                    if self.provider == "LM Studio":
+                                        if 'choices' in chunk and chunk['choices']:
+                                            content = chunk['choices'][0]['delta'].get('content', '')
+                                        else:
+                                            continue
+                                    else: # Ollama
+                                        content = chunk.get('message', {}).get('content', '')
+                                    if content:
+                                        yield content
+                                except json.JSONDecodeError:
+                                    continue
                             elif "{" in decoded_line:
                                 chunk = json.loads(decoded_line)
                                 content = chunk.get('message', {}).get('content', '')
