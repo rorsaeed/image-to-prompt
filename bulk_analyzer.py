@@ -1,6 +1,7 @@
 # bulk_analyzer.py
 import streamlit as st
 import os
+import json
 from pathlib import Path
 import base64
 from api_client import APIClient
@@ -68,12 +69,22 @@ def bulk_analysis_page():
                             for chunk in stream_generator:
                                 full_response += chunk
 
+                            try:
+                                response_json = json.loads(full_response)
+                                if 'error' in response_json:
+                                    error_message = response_json.get('error', {}).get('message', full_response)
+                                    st.error(f"Error analyzing {image_path.name}: {error_message}")
+                                    full_response = ""
+                            except json.JSONDecodeError:
+                                # Not a JSON error response, proceed as normal
+                                pass
+
                             st.session_state.bulk_analysis_results.append({
                                 "image_path": str(image_path),
                                 "prompt": full_response
                             })
 
-                            if save_prompts:
+                            if save_prompts and full_response:
                                 prompt_file_path = image_path.with_suffix(".txt")
                                 with open(prompt_file_path, "w", encoding="utf-8") as f:
                                     f.write(full_response)
@@ -105,4 +116,3 @@ def bulk_analysis_page():
                     with cols[col_idx]:
                         st.image(result["image_path"], use_container_width=True)
                         st.text_area("Generated Prompt", value=result["prompt"], height=200, key=f"prompt_{img_idx}")
-

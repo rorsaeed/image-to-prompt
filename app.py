@@ -533,7 +533,7 @@ st.markdown(
 st.title("🖼️ Image-to-Prompt AI Assistant")
 st.warning("**Important:** For local models, ensure **LM Studio** or **Ollama** is running with the API server enabled and a vision model loaded. For Google, ensure you have entered a valid API key.")
 
-tab1, tab2 = st.tabs(["Chat", "Bulk Analysis"])
+tab1, tab2, tab3 = st.tabs(["Chat", "Bulk Analysis", "Recommended Models"])
 
 with tab1:
     # Create a list of containers for each message so we can update them in-place
@@ -615,6 +615,55 @@ with tab1:
 
 with tab2:
     bulk_analysis_page()
+
+with tab3:
+    st.header("Recommended Models")
+
+    st.subheader("gemma-3-27b (24Gb+ Vram)")
+    st.markdown("""
+    - **LM Studio:** [Download](https://model.lmstudio.ai/download/mlabonne/gemma-3-27b-it-abliterated-GGUF)
+    - **Ollama:** [gemma3](https://ollama.com/library/gemma3)
+      ```bash
+      ollama run gemma3:27b
+      ```
+    """)
+
+    st.subheader("gemma-3-12b (8Gb+ Vram)")
+    st.markdown("""
+    - **LM Studio:** [Download](https://model.lmstudio.ai/download/mlabonne/gemma-3-12b-it-abliterated-GGUF)
+    - **Ollama:** [gemma3](https://ollama.com/library/gemma3)
+      ```bash
+      ollama run gemma3:12b
+      ```
+    """)
+
+    st.subheader("gemma-3-4b (4Gb+ Vram)")
+    st.markdown("""
+    - **LM Studio:** [Download](https://model.lmstudio.ai/download/mlabonne/gemma-3-4b-it-abliterated-GGUF)
+    - **Ollama:** [gemma3](https://ollama.com/library/gemma3)
+      ```bash
+      ollama run gemma3
+      ```
+    """)
+
+    st.subheader("llama-joycaption-beta-one-hf-llava (12Gb+ Vram)")
+    st.markdown("""
+    *Best for system prompt builder*
+    - **LM Studio:** [Download](https://model.lmstudio.ai/download/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf)
+    - **Ollama:** [aha2025/llama-joycaption-beta-one-hf-llava](https://ollama.com/aha2025/llama-joycaption-beta-one-hf-llava)
+      ```bash
+      ollama run aha2025/llama-joycaption-beta-one-hf-llava
+      ```
+    """)
+
+    st.subheader("Qwen2.5-VL-7B (8Gb+ Vram)")
+    st.markdown("""
+    - **LM Studio:** [Download](https://model.lmstudio.ai/download/Misaka27260/Qwen2.5-VL-7B-Instruct-abliterated-GGUF)
+    - **Ollama:** [qwen2.5vl](https://ollama.com/library/qwen2.5vl)
+      ```bash
+      ollama run qwen2.5vl
+      ```
+    """)
 
 # --- CSS for code block wrapping ---
 st.markdown("""
