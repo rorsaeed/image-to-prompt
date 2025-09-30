@@ -3,6 +3,8 @@ import json
 import base64
 from pathlib import Path
 import subprocess
+import mimetypes
+import time
 
 class APIClient:
     """A client for interacting with local LLM APIs (Ollama, LM Studio, and Koboldcpp)."""
@@ -53,8 +55,90 @@ class APIClient:
         """Encodes an image file to a base64 string."""
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
+    
+    def upload_video_to_google(self, video_path):
+        """Upload a video file to Google Files API and return the file URI."""
+        if self.provider != "Google" or not self.google_api_key:
+            raise ValueError("Video upload is only supported for Google provider with API key")
+        
+        # Get MIME type
+        mime_type, _ = mimetypes.guess_type(video_path)
+        if not mime_type or not mime_type.startswith('video/'):
+            raise ValueError(f"Invalid video file type: {mime_type}")
+        
+        # Step 1: Start resumable upload
+        upload_url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={self.google_api_key}"
+        
+        metadata = {
+            "file": {
+                "display_name": Path(video_path).name
+            }
+        }
+        
+        headers = {
+            "X-Goog-Upload-Protocol": "resumable",
+            "X-Goog-Upload-Command": "start",
+            "X-Goog-Upload-Header-Content-Length": str(Path(video_path).stat().st_size),
+            "X-Goog-Upload-Header-Content-Type": mime_type,
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(upload_url, headers=headers, json=metadata)
+        response.raise_for_status()
+        
+        upload_session_url = response.headers.get("X-Goog-Upload-URL")
+        if not upload_session_url:
+            raise ValueError("Failed to get upload session URL")
+        
+        # Step 2: Upload the file content
+        with open(video_path, "rb") as video_file:
+            video_content = video_file.read()
+        
+        upload_headers = {
+            "Content-Length": str(len(video_content)),
+            "X-Goog-Upload-Offset": "0",
+            "X-Goog-Upload-Command": "upload, finalize"
+        }
+        
+        upload_response = requests.post(upload_session_url, headers=upload_headers, data=video_content)
+        upload_response.raise_for_status()
+        
+        file_info = upload_response.json()
+        file_uri = file_info.get("file", {}).get("uri")
+        
+        if not file_uri:
+            raise ValueError("Failed to get file URI from upload response")
+        
+        # Step 3: Wait for processing to complete
+        self._wait_for_file_processing(file_uri)
+        
+        return file_uri
+    
+    def _wait_for_file_processing(self, file_uri):
+        """Wait for the uploaded file to be processed by Google."""
+        file_id = file_uri.split("/")[-1]
+        get_url = f"https://generativelanguage.googleapis.com/v1beta/files/{file_id}?key={self.google_api_key}"
+        
+        max_wait_time = 300  # 5 minutes
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait_time:
+            response = requests.get(get_url)
+            response.raise_for_status()
+            
+            file_data = response.json()
+            state = file_data.get("state")
+            
+            if state == "ACTIVE":
+                return  # File is ready
+            elif state == "FAILED":
+                raise ValueError(f"File processing failed: {file_data.get('error', 'Unknown error')}")
+            
+            time.sleep(2)  # Wait 2 seconds before checking again
+        
+        raise ValueError("File processing timed out")
 
-    def generate_chat_response(self, model, messages, images=None, stream=True):
+    def generate_chat_response(self, model, messages, images=None, videos=None, stream=True):
         """Sends a request to the chat API and yields the response chunks."""
         headers = {"Content-Type": "application/json"}
         
@@ -92,21 +176,58 @@ class APIClient:
                 
                 current_role = role
                 
-                # Add text part
-                if msg.get('content'):
-                    current_parts.append({"text": msg['content']})
+                # Add text part (validate content is not empty)
+                content = msg.get('content', '').strip()
+                if content:
+                    current_parts.append({"text": content})
 
                 # Add image parts (only for the last user message)
                 if msg['role'] == 'user' and images:
                     for img_path in images:
-                        mime_type = f"image/{img_path.suffix.lstrip('.')}" 
-                        current_parts.append({
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": self._encode_image(img_path)
-                            }
-                        })
+                        # Proper MIME type detection with fallback
+                        file_ext = img_path.suffix.lower().lstrip('.')
+                        mime_type_map = {
+                            'jpg': 'image/jpeg',
+                            'jpeg': 'image/jpeg', 
+                            'png': 'image/png',
+                            'gif': 'image/gif',
+                            'webp': 'image/webp',
+                            'bmp': 'image/bmp'
+                        }
+                        mime_type = mime_type_map.get(file_ext, 'image/jpeg')
+                        
+                        try:
+                            image_data = self._encode_image(img_path)
+                            if image_data:  # Only add if encoding was successful
+                                current_parts.append({
+                                    "inline_data": {
+                                        "mime_type": mime_type,
+                                        "data": image_data
+                                    }
+                                })
+                        except Exception as e:
+                            print(f"Warning: Failed to encode image {img_path}: {e}")
+                            continue
                     images = None # Process images only once
+                
+                # Add video parts (only for the last user message)
+                if msg['role'] == 'user' and videos:
+                    for video_path in videos:
+                        try:
+                            # Upload video to Google Files API and get URI
+                            file_uri = self.upload_video_to_google(video_path)
+                            current_parts.append({
+                                "file_data": {
+                                    "mime_type": mimetypes.guess_type(video_path)[0],
+                                    "file_uri": file_uri
+                                }
+                            })
+                        except Exception as e:
+                            # If video upload fails, add an error message
+                            current_parts.append({
+                                "text": f"[Video upload failed: {str(e)}]"
+                            })
+                    videos = None # Process videos only once
 
             # Add the last pending message
             if current_role and current_parts:
@@ -116,6 +237,17 @@ class APIClient:
             if merged_contents and merged_contents[0]['role'] != 'user':
                  # If the first message is from the model, add a dummy user message
                 merged_contents.insert(0, {"role": "user", "parts": [{"text": "(Previous context)"}]})
+            
+            # 5. Validate that we have valid content to send
+            if not merged_contents:
+                yield "--- \n**API Error:**\n\n`No valid content to send to the API.`"
+                return
+            
+            # Ensure all messages have at least one part
+            for content in merged_contents:
+                if not content.get('parts') or len(content['parts']) == 0:
+                    yield "--- \n**API Error:**\n\n`Invalid message structure: empty parts detected.`"
+                    return
 
             payload = {
                 "contents": merged_contents,
@@ -133,51 +265,80 @@ class APIClient:
                 params['alt'] = 'sse'
 
             raw_response_for_debugging = ""
-            try:
-                with requests.post(f"{self.api_endpoint}/{model}:generateContent", headers=headers, json=payload, params=params, stream=stream, timeout=300) as response:
-                    response.raise_for_status()
-                    if stream:
-                        for line in response.iter_lines():
-                            if line:
-                                decoded_line = line.decode('utf-8')
-                                if decoded_line.startswith('data: '):
-                                    json_str = decoded_line[6:].strip()
-                                    try:
-                                        chunk = json.loads(json_str)
-                                        # Check for safety ratings and blocked prompts
-                                        if chunk.get('promptFeedback', {}).get('blockReason'):
-                                            reason = chunk['promptFeedback']['blockReason']
-                                            yield f"\n--- \n**Content Moderation Error:**\n\n`The request was blocked due to: {reason}`"
-                                            return
-                                        if not chunk.get('candidates'):
-                                            continue # Skip empty chunks
+            max_retries = 3
+            retry_delay = 1
+            
+            for attempt in range(max_retries):
+                try:
+                    with requests.post(f"{self.api_endpoint}/{model}:generateContent", headers=headers, json=payload, params=params, stream=stream, timeout=300) as response:
+                        response.raise_for_status()
+                        if stream:
+                            for line in response.iter_lines():
+                                if line:
+                                    decoded_line = line.decode('utf-8')
+                                    if decoded_line.startswith('data: '):
+                                        json_str = decoded_line[6:].strip()
+                                        try:
+                                            chunk = json.loads(json_str)
+                                            # Check for safety ratings and blocked prompts
+                                            if chunk.get('promptFeedback', {}).get('blockReason'):
+                                                reason = chunk['promptFeedback']['blockReason']
+                                                yield f"\n--- \n**Content Moderation Error:**\n\n`The request was blocked due to: {reason}`"
+                                                return
+                                            if not chunk.get('candidates'):
+                                                continue # Skip empty chunks
 
-                                        content = chunk['candidates'][0]['content']['parts'][0]['text']
-                                        if content:
-                                            yield content
-                                    except (json.JSONDecodeError, KeyError, IndexError) as e:
-                                        # This can happen with malformed SSE data or unexpected structures
-                                        print(f"SSE parsing error: {e}\nLine: {json_str}")
-                                        continue 
-                    else: # Not streaming
-                        data = response.json()
-                        if data.get('promptFeedback', {}).get('blockReason'):
-                            reason = data['promptFeedback']['blockReason']
-                            yield f"\n--- \n**Content Moderation Error:**\n\n`The request was blocked due to: {reason}`"
-                            return
-                        content = data['candidates'][0]['content']['parts'][0]['text']
-                        if content:
-                            yield content
+                                            content = chunk['candidates'][0]['content']['parts'][0]['text']
+                                            if content:
+                                                yield content
+                                        except (json.JSONDecodeError, KeyError, IndexError) as e:
+                                            # This can happen with malformed SSE data or unexpected structures
+                                            print(f"SSE parsing error: {e}\nLine: {json_str}")
+                                            continue 
+                        else: # Not streaming
+                            data = response.json()
+                            if data.get('promptFeedback', {}).get('blockReason'):
+                                reason = data['promptFeedback']['blockReason']
+                                yield f"\n--- \n**Content Moderation Error:**\n\n`The request was blocked due to: {reason}`"
+                                return
+                            content = data['candidates'][0]['content']['parts'][0]['text']
+                            if content:
+                                yield content
+                    return  # Success, exit retry loop
 
-            except requests.exceptions.RequestException as e:
-                yield f"--- \n**API Connection Error:**\n\n`{e}`"
-            except json.JSONDecodeError as e:
-                yield (
-                    f"--- \n**API Error: Failed to decode the server's response.**\n\n"
-                    f"**Python Error:** `{e}`\n\n"
-                    f"**Full raw response from server:**\n\n```\n{raw_response_for_debugging or 'Response was empty.'}\n```"
-                )
-            return
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 400 and attempt < max_retries - 1:
+                        # Retry on 400 errors (might be transient)
+                        print(f"Attempt {attempt + 1} failed with 400 error, retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        # Final attempt or non-retryable error
+                        error_detail = ""
+                        try:
+                            error_response = e.response.json()
+                            error_detail = error_response.get('error', {}).get('message', str(e))
+                        except:
+                            error_detail = str(e)
+                        yield f"--- \n**API Connection Error:**\n\n`{error_detail}`"
+                        return
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        print(f"Attempt {attempt + 1} failed with connection error, retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        yield f"--- \n**API Connection Error:**\n\n`{e}`"
+                        return
+                except json.JSONDecodeError as e:
+                    yield (
+                        f"--- \n**API Error: Failed to decode the server's response.**\n\n"
+                        f"**Python Error:** `{e}`\n\n"
+                        f"**Full raw response from server:**\n\n```\n{raw_response_for_debugging or 'Response was empty.'}\n```"
+                    )
+                    return
 
         if images and messages and messages[-1]['role'] == 'user':
             last_message = messages[-1]

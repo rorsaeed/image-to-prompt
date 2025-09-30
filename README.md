@@ -9,6 +9,7 @@ This Python application provides a user-friendly interface to interact with loca
 - **Multi-API Support**: Works with Ollama, LM Studio, and Koboldcpp APIs, and Google's Gemini API.
 - **Multi-Model Interaction**: Select and query multiple models simultaneously.
 - **Image-to-Prompt**: Upload images via file selector or drag-and-drop to generate descriptive prompts.
+- **Video Analysis**: Upload and analyze video files using Google's Gemini models with Files API integration.
 - **Bulk Image Analysis**: Select a folder of images and analyze them all at once, with an option to save the generated prompts to text files.
 - **Model Management**: Unload models from memory (Ollama only) to free up VRAM.
 - **Custom System Prompts**: Define, save, and reuse custom system prompts, with the last one remembered.
@@ -56,6 +57,38 @@ Before running the application, you **MUST** have one of the following installed
 #### Recommended Model (for LM Studio / Koboldcpp)
 A great GGUF model for generating detailed prompts is available here:
 [bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF](https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF)
+
+---
+
+## 🎥 Video Support
+
+The application now supports video analysis using **Google's Gemini models**. This feature allows you to upload and analyze video files for content description, scene analysis, and more.
+
+### Requirements for Video Analysis
+- **Google API Provider**: Video support is only available when using Google's Gemini models
+- **Google API Key**: You must have a valid Google API key configured
+- **Supported Formats**: MP4, AVI, MOV, MKV, WebM
+
+### How to Use Video Analysis
+1. **Select Google Provider**: In the sidebar, choose "Google" as your API provider
+2. **Enter API Key**: Input your Google API key in the configuration section
+3. **Choose a Model**: Select a Gemini model (e.g., gemini-1.5-flash, gemini-1.5-pro)
+4. **Upload Videos**: Use the video upload section that appears when Google is selected
+5. **Analyze**: Add your prompt and click "Analyze Media" to process the video
+
+### Video Processing
+- Videos are automatically uploaded to Google's Files API using resumable upload
+- The system waits for Google to process the video before analysis
+- Videos are temporarily stored in the `temp_videos/` directory
+- Error handling ensures graceful fallback if video upload fails
+
+### Supported Video Analysis Tasks
+- Content description and summarization
+- Scene-by-scene analysis
+- Object and activity detection
+- Text extraction from video frames
+- Audio transcription (if supported by the model)
+- Custom analysis based on your prompts
 
 
 
@@ -145,6 +178,7 @@ After installation, follow these critical steps:
 Your web browser will open with the application running. Configure the API provider, URL, and select your model(s) from the sidebar to begin.
 
 ## Updates
+-   **2025-01-08:** Added video upload and analysis support for Google's Gemini models using Files API integration.
 -   **2025-09-02:** Added support for Google's Gemini Flash models (1.5, 2.0, and 2.5).
 -   **2025-08-31:** Add Advanced System Prompt Builder.
 -   **2025-08-30:** Added a "Bulk Analysis" tab to analyze all images in a selected folder. You can now enter a folder path and optionally save the generated prompts to text files in the same directory.

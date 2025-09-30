@@ -97,6 +97,7 @@ def init_session_state():
         st.session_state.current_system_prompt = st.session_state.system_prompts.get(last_prompt_name, st.session_state.system_prompts.get("Default Image-to-Prompt", ""))
         st.session_state.current_system_prompt_name = last_prompt_name
     if "uploaded_files" not in st.session_state: st.session_state.uploaded_files = []
+    if "uploaded_videos" not in st.session_state: st.session_state.uploaded_videos = []
     
     if "uploader_key" not in st.session_state: st.session_state.uploader_key = str(uuid.uuid4())
     if "generating" not in st.session_state:
@@ -116,6 +117,18 @@ def save_uploaded_file(uploaded_file):
     with open(file_path, "wb") as f: f.write(uploaded_file.getbuffer())
     return (file_path, original_name)
 
+def save_uploaded_video(uploaded_file):
+    temp_dir = Path("temp_videos"); temp_dir.mkdir(exist_ok=True)
+    file_path = temp_dir / f"{uuid.uuid4()}_{uploaded_file.name}"
+    original_name = uploaded_file.name
+    with open(file_path, "wb") as f: f.write(uploaded_file.getbuffer())
+    return (file_path, original_name)
+
+def is_video_file(filename):
+    """Check if the file is a supported video format."""
+    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
+    return Path(filename).suffix.lower() in video_extensions
+
 def auto_save_chat():
     if not st.session_state.messages: return
     if st.session_state.chat_id is None:
@@ -127,7 +140,7 @@ def auto_save_chat():
 
 def start_new_chat():
     st.session_state.messages = []; st.session_state.chat_id = None; st.session_state.uploaded_files = []
-    st.session_state.uploader_key = str(uuid.uuid4())
+    st.session_state.uploaded_videos = []; st.session_state.uploader_key = str(uuid.uuid4())
 
 def load_chat_callback():
     selected_chat_file = st.session_state.get("selected_chat")
@@ -135,7 +148,8 @@ def load_chat_callback():
         filepath = cm.CONVERSATIONS_DIR / selected_chat_file
         st.session_state.messages = cm.load_conversation(filepath)
         st.session_state.chat_id = selected_chat_file
-        st.session_state.uploaded_files = []; st.session_state.uploader_key = str(uuid.uuid4())
+        st.session_state.uploaded_files = []; st.session_state.uploaded_videos = []
+        st.session_state.uploader_key = str(uuid.uuid4())
 
 # <<< The `regenerate_last_response` function has been REMOVED >>>
 def run_generation_logic():
@@ -143,6 +157,8 @@ def run_generation_logic():
         last_user_message = st.session_state.messages[-1]
         image_info = last_user_message.get("images", [])
         image_paths = [Path(info["path"]) for info in image_info]
+        video_info = last_user_message.get("videos", [])
+        video_paths = [Path(info["path"]) for info in video_info]
         api_messages = [{"role": "system", "content": st.session_state.current_system_prompt}]
         for msg in st.session_state.messages:
             if msg['role'] != 'system': api_messages.append({"role": msg["role"], "content": msg["content"]})
@@ -156,7 +172,7 @@ def run_generation_logic():
                 full_response = ""
                 try:
                     messages_for_this_model = copy.deepcopy(api_messages)
-                    stream_generator = api_client.generate_chat_response(model=model, messages=messages_for_this_model, images=image_paths)
+                    stream_generator = api_client.generate_chat_response(model=model, messages=messages_for_this_model, images=image_paths, videos=video_paths)
                     for chunk in stream_generator:
                         full_response += chunk
                         # Filter out thinking tags before displaying
@@ -180,17 +196,29 @@ def run_generation_logic():
         # This makes the uploaded images persist for re-analysis.
         st.rerun()
 
-def process_and_send_message(prompt_text, uploaded_file_info):
+def process_and_send_message(prompt_text, uploaded_file_info, uploaded_video_info=None):
     current_provider_name = st.session_state.config.get("api_provider", "Ollama") # Get current provider
     selected_models = st.session_state.config["providers"].get(current_provider_name, {}).get("selected_models", [])
     if not selected_models: st.error("Please select at least one model from the sidebar."); return
 
     image_info_for_message = [{"path": str(info[0]), "name": info[1]} for info in uploaded_file_info]
-    is_image_only_request = not prompt_text.strip()
-    internal_prompt = prompt_text if not is_image_only_request else "Analyze the attached image(s) according to the system prompt."
+    video_info_for_message = [{"path": str(info[0]), "name": info[1]} for info in uploaded_video_info] if uploaded_video_info else []
+    
+    has_media = bool(image_info_for_message or video_info_for_message)
+    is_media_only_request = not prompt_text.strip()
+    
+    if is_media_only_request and has_media:
+        if video_info_for_message:
+            internal_prompt = "Analyze the attached video(s) and image(s) according to the system prompt." if image_info_for_message else "Analyze the attached video(s) according to the system prompt."
+        else:
+            internal_prompt = "Analyze the attached image(s) according to the system prompt."
+    else:
+        internal_prompt = prompt_text
+    
     display_text = prompt_text
     user_message = {"role": "user", "content": internal_prompt, "display_content": display_text, "id": str(uuid.uuid4())}
     if image_info_for_message: user_message["images"] = image_info_for_message
+    if video_info_for_message: user_message["videos"] = video_info_for_message
     
     st.session_state.messages.append(user_message)
     auto_save_chat()
@@ -200,6 +228,11 @@ def process_and_send_message(prompt_text, uploaded_file_info):
 def remove_uploaded_image(idx):
     if 0 <= idx < len(st.session_state.uploaded_files):
         del st.session_state.uploaded_files[idx]
+        st.rerun()
+
+def remove_uploaded_video(idx):
+    if 0 <= idx < len(st.session_state.uploaded_videos):
+        del st.session_state.uploaded_videos[idx]
         st.rerun()
 
 def remove_message(idx):
@@ -556,6 +589,14 @@ with tab1:
                                 with st.popover("View Full Size", use_container_width=True):
                                     st.image(str(img_path))
                                 st.caption(image_info["name"])
+                if "videos" in message:
+                    video_cols = st.columns(len(message["videos"]))
+                    for j, video_info in enumerate(message["videos"]):
+                        with video_cols[j]:
+                            video_path = Path(video_info["path"])
+                            if video_path.exists():
+                                st.video(str(video_path))
+                                st.caption(video_info["name"])
             with col_btn:
                 if st.button("×", key=f"remove_msg_{idx}", help="Delete this message"):
                     remove_message(idx)
@@ -567,6 +608,9 @@ with tab1:
     if st.session_state.generating:
         run_generation_logic()
     else:
+        current_provider = st.session_state.config.get("api_provider", "Ollama")
+        
+        # Image upload section
         st.subheader("Upload Images (Optional)")
         uploaded_files_from_widget = st.file_uploader(
             "Upload image(s)", 
@@ -583,8 +627,30 @@ with tab1:
             # Initialize to empty list if nothing uploaded and no existing files
             st.session_state.uploaded_files = []
         
+        # Video upload section (only for Google)
+        if current_provider == "Google":
+            st.subheader("Upload Videos (Google Only)")
+            uploaded_videos_from_widget = st.file_uploader(
+                "Upload video(s)", 
+                type=["mp4", "avi", "mov", "mkv", "webm", "flv", "wmv", "m4v"],
+                accept_multiple_files=True,
+                key=f"video_{st.session_state.uploader_key}"
+            )
+
+            if uploaded_videos_from_widget:
+                # Process multiple uploaded video files
+                new_video_uploads = [save_uploaded_video(file) for file in uploaded_videos_from_widget]
+                st.session_state.uploaded_videos = new_video_uploads
+            elif not st.session_state.uploaded_videos:
+                # Initialize to empty list if nothing uploaded and no existing files
+                st.session_state.uploaded_videos = []
+        else:
+            # Clear videos if not using Google
+            st.session_state.uploaded_videos = []
+        
         # Display all uploaded images in a grid
         if st.session_state.uploaded_files:
+            st.write("**Uploaded Images:**")
             num_images = len(st.session_state.uploaded_files)
             cols_per_row = min(4, num_images)  # Maximum 4 images per row
             
@@ -604,14 +670,52 @@ with tab1:
                                 remove_uploaded_image(img_idx)
                             with st.popover("View Full Size", use_container_width=True):
                                 st.image(str(file_path))
+        
+        # Display all uploaded videos in a grid (only for Google)
+        if st.session_state.uploaded_videos and current_provider == "Google":
+            st.write("**Uploaded Videos:**")
+            num_videos = len(st.session_state.uploaded_videos)
+            cols_per_row = min(3, num_videos)  # Maximum 3 videos per row
+            
+            # Calculate how many rows we need
+            num_rows = (num_videos + cols_per_row - 1) // cols_per_row
+            
+            # Create a grid to display videos
+            for row in range(num_rows):
+                cols = st.columns(cols_per_row)
+                for col_idx in range(cols_per_row):
+                    vid_idx = row * cols_per_row + col_idx
+                    if vid_idx < num_videos:
+                        file_path, original_name = st.session_state.uploaded_videos[vid_idx]
+                        with cols[col_idx]:
+                            st.video(str(file_path))
+                            st.caption(original_name)
+                            if st.button("×", key=f"remove_vid_{vid_idx}"):
+                                remove_uploaded_video(vid_idx)
+        
         col1, col2 = st.columns([1, 4])
         with col1:
-            if st.session_state.uploaded_files:
-                if st.button("Analyze Image(s)"):
-                    process_and_send_message(prompt_text="", uploaded_file_info=st.session_state.uploaded_files)
+            has_media = bool(st.session_state.uploaded_files or st.session_state.uploaded_videos)
+            if has_media:
+                media_text = []
+                if st.session_state.uploaded_files:
+                    media_text.append("Image(s)")
+                if st.session_state.uploaded_videos:
+                    media_text.append("Video(s)")
+                button_text = f"Analyze {' & '.join(media_text)}"
+                if st.button(button_text):
+                    process_and_send_message(
+                        prompt_text="", 
+                        uploaded_file_info=st.session_state.uploaded_files,
+                        uploaded_video_info=st.session_state.uploaded_videos
+                    )
         with col2:
             if prompt := st.chat_input("...or add a message and press Enter"):
-                process_and_send_message(prompt_text=prompt, uploaded_file_info=st.session_state.uploaded_files)
+                process_and_send_message(
+                    prompt_text=prompt, 
+                    uploaded_file_info=st.session_state.uploaded_files,
+                    uploaded_video_info=st.session_state.uploaded_videos
+                )
 
 with tab2:
     bulk_analysis_page()

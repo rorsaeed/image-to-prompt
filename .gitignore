@@ -4,3 +4,4 @@ venv
 __pycache__
 temp_images
 data/conversations
+temp_videos
