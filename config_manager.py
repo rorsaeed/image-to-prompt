@@ -83,6 +83,15 @@ def load_config():
             "Koboldcpp": { # Add Koboldcpp defaults
                 "api_base_url": "http://localhost:5001",
                 "selected_models": []
+            },
+            "MiniCPM": { # Add MiniCPM defaults
+                "selected_model": "MiniCPM-V-4.5-int4",
+                "device": "auto",
+                "max_num_frames": 180,
+                "max_num_packing": 3,
+                "default_fps": 3,
+                "enable_thinking": False,
+                "auto_unload": False
             }
         }
     }
@@ -106,7 +115,8 @@ def load_config():
             },
             "Google": default_config["providers"]["Google"],
             "LM Studio": default_config["providers"]["LM Studio"], # Ensure these are added
-            "Koboldcpp": default_config["providers"]["Koboldcpp"] # Ensure these are added
+            "Koboldcpp": default_config["providers"]["Koboldcpp"], # Ensure these are added
+            "MiniCPM": default_config["providers"]["MiniCPM"] # Ensure MiniCPM is added
         }
         config.pop("api_base_url", None)
         config.pop("selected_models", None)
