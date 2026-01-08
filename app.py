@@ -13,6 +13,7 @@ import re
 import config_manager as cm
 from api_client import APIClient
 from bulk_analyzer import bulk_analysis_page
+from metadata_extractor import ImageMetadataExtractor
 
 # --- Constants from joycaption ---
 CAPTION_TYPE_MAP = {
@@ -98,6 +99,7 @@ def init_session_state():
         st.session_state.current_system_prompt_name = last_prompt_name
     if "uploaded_files" not in st.session_state: st.session_state.uploaded_files = []
     if "uploaded_videos" not in st.session_state: st.session_state.uploaded_videos = []
+    if "metadata_extractor" not in st.session_state: st.session_state.metadata_extractor = ImageMetadataExtractor()
     
     if "uploader_key" not in st.session_state: st.session_state.uploader_key = str(uuid.uuid4())
     if "generating" not in st.session_state:
@@ -128,6 +130,133 @@ def is_video_file(filename):
     """Check if the file is a supported video format."""
     video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
     return Path(filename).suffix.lower() in video_extensions
+
+def extract_ai_prompts_from_metadata(metadata):
+    """Extract prompt and negative prompt from AI metadata."""
+    if not metadata:
+        return None, None
+    
+    prompt = None
+    negative_prompt = None
+    
+    # Function to parse structured prompt data (like from AUTOMATIC1111)
+    def parse_structured_prompt(text_data):
+        nonlocal prompt, negative_prompt
+        if 'Negative prompt:' in text_data:
+            # Split on "Negative prompt:" to separate positive and negative
+            parts = text_data.split('Negative prompt:', 1)
+            if len(parts) == 2:
+                # Extract positive prompt (everything before "Negative prompt:")
+                positive_part = parts[0].strip()
+                # Remove any leading labels like "Prompt:" or similar
+                if positive_part.startswith(('Prompt:', 'prompt:')):
+                    positive_part = positive_part.split(':', 1)[1].strip()
+                if not prompt and positive_part:
+                    prompt = positive_part
+                
+                # Extract negative prompt (everything after "Negative prompt:" until next parameter)
+                negative_part = parts[1].strip()
+                # Find where parameters start (usually indicated by newline + parameter name)
+                param_indicators = ['\nSteps:', '\nSampler:', '\nCFG scale:', '\nSeed:', '\nSize:', '\nModel:', '\nClip skip:']
+                for indicator in param_indicators:
+                    if indicator in negative_part:
+                        negative_part = negative_part.split(indicator)[0].strip()
+                        break
+                if not negative_prompt and negative_part:
+                    negative_prompt = negative_part
+        elif not prompt and len(text_data) > 20:  # If no structured format, use as prompt
+            prompt = text_data
+    
+    # Priority 1: Check PNG text data (most common for AI images)
+    if metadata.get('png_text'):
+        png_data = metadata['png_text']
+        # Check for parameters field (AUTOMATIC1111 format)
+        if 'parameters' in png_data:
+            parse_structured_prompt(str(png_data['parameters']))
+        
+        # Check for direct prompt fields
+        if not prompt and 'prompt' in png_data:
+            prompt = str(png_data['prompt'])
+        if not negative_prompt and 'negative_prompt' in png_data:
+            negative_prompt = str(png_data['negative_prompt'])
+    
+    # Priority 2: Check AI metadata if not found in PNG text
+    if (not prompt or not negative_prompt) and metadata.get('ai_metadata'):
+        ai_data = metadata['ai_metadata']
+        for key, value in ai_data.items():
+            key_lower = key.lower()
+            if 'prompt' in key_lower and 'negative' not in key_lower and not prompt:
+                prompt = str(value)
+            elif 'negative' in key_lower and 'prompt' in key_lower and not negative_prompt:
+                negative_prompt = str(value)
+            elif key_lower in ['user_comment', 'ai prompt/parameters'] and (not prompt or not negative_prompt):
+                parse_structured_prompt(str(value))
+    
+    # Priority 3: Check Windows properties if still not found
+    if (not prompt or not negative_prompt) and metadata.get('windows_properties'):
+        for key, value in metadata['windows_properties'].items():
+            if value and len(str(value)) > 20:
+                parse_structured_prompt(str(value))
+                if prompt and negative_prompt:  # Stop if we found both
+                    break
+    
+    return prompt, negative_prompt
+
+
+def display_image_metadata(image_path, original_name):
+    """Display image metadata in an expandable section."""
+    # Check if the file is a PNG - only extract metadata for PNG files
+    file_extension = Path(image_path).suffix.lower()
+    if file_extension not in ['.png']:
+        # For non-PNG files, show a simple message
+        with st.expander(f"📊 View Metadata - {original_name}", expanded=False):
+            st.info(f"Metadata extraction is only supported for PNG files. This is a {file_extension.upper()} file.")
+        return
+    
+    metadata = st.session_state.metadata_extractor.extract_metadata(image_path)
+    
+    if metadata:
+        formatted_sections = st.session_state.metadata_extractor.format_metadata_for_display(metadata)
+        
+        if formatted_sections:
+            with st.expander(f"📊 View Metadata - {original_name}", expanded=False):
+                for idx, section in enumerate(formatted_sections):
+                    # Determine CSS class based on section title
+                    css_class = "metadata-section"
+                    if "AI Generation" in section['title']:
+                        css_class += " ai-metadata"
+                    elif "Technical" in section['title']:
+                        css_class += " technical-metadata"
+                    elif "File Information" in section['title']:
+                        css_class += " file-metadata"
+                    
+                    # Create a styled container for each section
+                    st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
+                    st.markdown(f'<div class="metadata-title">{section["title"]}</div>', unsafe_allow_html=True)
+                    
+                    # Display content in a nice format
+                    for key, value in section['content'].items():
+                        # Handle long text values (like prompts)
+                        if len(str(value)) > 100:
+                            st.markdown(f'<div class="metadata-item"><span class="metadata-key">{key}:</span></div>', unsafe_allow_html=True)
+                            st.code(str(value), language=None)
+                        else:
+                            # Truncate very long values for display
+                            display_value = str(value)
+                            if len(display_value) > 50:
+                                display_value = display_value[:47] + "..."
+                            st.markdown(f'<div class="metadata-item"><span class="metadata-key">{key}:</span> <span class="metadata-value">{html.escape(display_value)}</span></div>', unsafe_allow_html=True)
+                    
+
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    st.write("")  # Add some spacing
+        else:
+            with st.expander(f"📊 View Metadata - {original_name}", expanded=False):
+                st.info("No AI generation metadata found in this image.")
+    else:
+        with st.expander(f"📊 View Metadata - {original_name}", expanded=False):
+            st.error("Could not extract metadata from this image.")
 
 def auto_save_chat():
     if not st.session_state.messages: return
@@ -162,6 +291,23 @@ def run_generation_logic():
         api_messages = [{"role": "system", "content": st.session_state.current_system_prompt}]
         for msg in st.session_state.messages:
             if msg['role'] != 'system': api_messages.append({"role": msg["role"], "content": msg["content"]})
+        
+        # Create APIClient with current provider settings
+        current_provider_name = st.session_state.config["api_provider"]
+        provider_config = st.session_state.config["providers"].get(current_provider_name, {})
+        
+        minicpm_config = None
+        if current_provider_name == "MiniCPM":
+            minicpm_config = provider_config
+        
+        api_client = APIClient(
+            provider=current_provider_name,
+            base_url=provider_config.get("api_base_url") if current_provider_name not in ["Google", "MiniCPM"] else None,
+            google_api_key=st.session_state.config.get("google_api_key") if current_provider_name == "Google" else None,
+            ollama_keep_alive=provider_config.get("keep_alive") if current_provider_name == "Ollama" else None,
+            unload_after_response=provider_config.get("unload_after_response", False) if current_provider_name == "LM Studio" else provider_config.get("auto_unload", False) if current_provider_name == "MiniCPM" else False,
+            minicpm_config=minicpm_config
+        )
         
         for model in st.session_state.config["providers"][st.session_state.config["api_provider"]]["selected_models"]:
             with st.chat_message("assistant"):
@@ -268,11 +414,17 @@ def regenerate_message(idx, container=None):
         image_paths = [Path(info['path']) for info in image_info]
         # Call the LLM for each selected model (regenerate only for the model of this message)
         model = msg.get('model', st.session_state.config['providers'][st.session_state.config['api_provider']]['selected_models'][0])
+        # Prepare MiniCPM config if needed
+        minicpm_config = None
+        if st.session_state.config['api_provider'] == 'MiniCPM':
+            minicpm_config = st.session_state.config['providers'][st.session_state.config['api_provider']]
+        
         api_client = APIClient(
             provider=st.session_state.config['api_provider'], 
-            base_url=st.session_state.config['providers'][st.session_state.config['api_provider']]['api_base_url'] if st.session_state.config['api_provider'] != 'Google' else None, 
+            base_url=st.session_state.config['providers'][st.session_state.config['api_provider']]['api_base_url'] if st.session_state.config['api_provider'] not in ['Google', 'MiniCPM'] else None, 
             google_api_key=st.session_state.config.get('google_api_key') if st.session_state.config['api_provider'] == 'Google' else None,
-            unload_after_response=st.session_state.config['providers'][st.session_state.config['api_provider']].get("unload_after_response", False) if st.session_state.config['api_provider'] == 'LM Studio' else False
+            unload_after_response=st.session_state.config['providers'][st.session_state.config['api_provider']].get("unload_after_response", False) if st.session_state.config['api_provider'] in ['LM Studio', 'MiniCPM'] else False,
+            minicpm_config=minicpm_config
         )
         target = container if container is not None else st
         message_placeholder = target.empty()
@@ -327,7 +479,7 @@ with st.sidebar:
                 cm.delete_conversation(st.session_state.chat_id); start_new_chat(); st.toast("Chat deleted!", icon="🗑️"); st.rerun()
     st.divider()
     st.header("⚙️ Configuration")
-    api_providers = ["Ollama", "LM Studio", "Koboldcpp", "Google"]
+    api_providers = ["Ollama", "LM Studio", "Koboldcpp", "Google", "MiniCPM"]
     current_provider = st.session_state.config.get("api_provider", "Ollama")
     st.session_state.config["api_provider"] = st.radio(
         "API Provider",
@@ -349,6 +501,76 @@ with st.sidebar:
             key="google_api_key_input",
             type="password",
             disabled=st.session_state.generating,
+            on_change=lambda: cm.save_config(st.session_state.config)
+        )
+    elif current_provider_name == "MiniCPM":
+        st.subheader("MiniCPM Configuration")
+        
+        # Device selection
+        device_options = ["auto", "cuda", "cpu"]
+        current_device = provider_config.get("device", "auto")
+        provider_config["device"] = st.selectbox(
+            "Device",
+            device_options,
+            index=device_options.index(current_device) if current_device in device_options else 0,
+            key="minicpm_device_selector",
+            disabled=st.session_state.generating,
+            on_change=lambda: cm.save_config(st.session_state.config)
+        )
+        
+        # Video Analysis Parameters
+        st.subheader("Video Analysis Parameters")
+        
+        provider_config["max_num_frames"] = st.number_input(
+            "MAX_NUM_FRAMES (Total frames to analyze)",
+            min_value=1,
+            max_value=1000,
+            value=provider_config.get("max_num_frames", 180),
+            key="minicpm_max_frames",
+            disabled=st.session_state.generating,
+            help="Controls the total number of frames to analyze from the video",
+            on_change=lambda: cm.save_config(st.session_state.config)
+        )
+        
+        provider_config["max_num_packing"] = st.number_input(
+            "MAX_NUM_PACKING (Frame grouping)",
+            min_value=1,
+            max_value=6,
+            value=provider_config.get("max_num_packing", 3),
+            key="minicpm_max_packing",
+            disabled=st.session_state.generating,
+            help="Determines how frames are grouped together for processing (valid range: 1-6)",
+            on_change=lambda: cm.save_config(st.session_state.config)
+        )
+        
+        provider_config["default_fps"] = st.number_input(
+            "Default FPS (Leave 0 for auto-calculation)",
+            min_value=0.0,
+            max_value=60.0,
+            value=float(provider_config.get("default_fps", 3.0)),
+            step=0.1,
+            key="minicpm_default_fps",
+            disabled=st.session_state.generating,
+            help="FPS for video sampling. Set to 0 to auto-calculate based on video duration and frame parameters",
+            on_change=lambda: cm.save_config(st.session_state.config)
+        )
+        
+        # Additional options
+        provider_config["enable_thinking"] = st.checkbox(
+            "Enable thinking mode",
+            value=provider_config.get("enable_thinking", False),
+            key="minicpm_enable_thinking",
+            disabled=st.session_state.generating,
+            help="Enable thinking mode for more detailed analysis",
+            on_change=lambda: cm.save_config(st.session_state.config)
+        )
+        
+        provider_config["auto_unload"] = st.checkbox(
+            "Auto-unload model after response",
+            value=provider_config.get("auto_unload", False),
+            key="minicpm_auto_unload",
+            disabled=st.session_state.generating,
+            help="Automatically unload the model from memory after each response to save GPU memory",
             on_change=lambda: cm.save_config(st.session_state.config)
         )
     else:
@@ -386,12 +608,17 @@ with st.sidebar:
             )
     
     # Instantiate APIClient with current provider's settings
+    minicpm_config = None
+    if current_provider_name == "MiniCPM":
+        minicpm_config = provider_config
+    
     api_client = APIClient(
         provider=current_provider_name,
-        base_url=provider_config.get("api_base_url") if current_provider_name != "Google" else None,
+        base_url=provider_config.get("api_base_url") if current_provider_name not in ["Google", "MiniCPM"] else None,
         google_api_key=st.session_state.config.get("google_api_key") if current_provider_name == "Google" else None,
         ollama_keep_alive=provider_config.get("keep_alive") if current_provider_name == "Ollama" else None, # Pass keep_alive
-        unload_after_response=provider_config.get("unload_after_response", False) if current_provider_name == "LM Studio" else False
+        unload_after_response=provider_config.get("unload_after_response", False) if current_provider_name == "LM Studio" else provider_config.get("auto_unload", False) if current_provider_name == "MiniCPM" else False,
+        minicpm_config=minicpm_config
     )
 
     with st.spinner("Fetching available models..."):
@@ -557,10 +784,229 @@ st.markdown(
         color: #000 !important;
         background: transparent !important;
     }
+    
+    /* Global video size constraints - apply to all videos */
+    [data-testid="stVideo"] {
+        max-width: 250px !important;
+        width: auto !important;
+    }
+    
+    [data-testid="stVideo"] > div {
+        max-width: 250px !important;
+        width: auto !important;
+    }
+    
+    [data-testid="stVideo"] video {
+        max-width: 250px !important;
+        max-height: 200px !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+    }
+    
+    /* Video thumbnail styling with higher specificity */
+    .video-thumbnail [data-testid="stVideo"],
+    .video-thumbnail [data-testid="stVideo"] > div,
+    .video-thumbnail [data-testid="stVideo"] > div > div {
+        max-width: 250px !important;
+        width: auto !important;
+    }
+    
+    .video-thumbnail [data-testid="stVideo"] > div > div > video,
+    .video-thumbnail [data-testid="stVideo"] video {
+        max-width: 250px !important;
+        max-height: 200px !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+    }
+    
+    .video-thumbnail-small [data-testid="stVideo"],
+    .video-thumbnail-small [data-testid="stVideo"] > div,
+    .video-thumbnail-small [data-testid="stVideo"] > div > div {
+        max-width: 250px !important;
+        width: auto !important;
+    }
+    
+    .video-thumbnail-small [data-testid="stVideo"] > div > div > video,
+    .video-thumbnail-small [data-testid="stVideo"] video {
+        max-width: 250px !important;
+        max-height: 150px !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+    }
+    
+    /* Metadata display styling - Using Streamlit default colors */
+    .metadata-section {
+        background-color: transparent;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+        border-left: 4px solid #007bff;
+        border: 1px solid rgba(49, 51, 63, 0.2);
+    }
+    
+    .metadata-title {
+        font-weight: bold;
+        margin-bottom: 8px;
+        font-size: 14px;
+    }
+    
+    .metadata-item {
+        margin: 4px 0;
+        font-size: 12px;
+        line-height: 1.4;
+    }
+    
+    .metadata-key {
+        font-weight: 600;
+        opacity: 0.7;
+    }
+    
+    .metadata-value {
+        word-break: break-word;
+    }
+    
+    .ai-metadata {
+        border-left-color: #28a745;
+        background-color: rgba(40, 167, 69, 0.05);
+    }
+    
+    .technical-metadata {
+        border-left-color: #ffc107;
+        background-color: rgba(255, 193, 7, 0.05);
+    }
+    
+    /* Light theme variables (default) */
+    :root {
+        --background-color: #ffffff;
+        --section-background-color: #f9fafb;
+        --border-color: #9ca3af;
+        --text-color: #111827;
+        --secondary-text-color: #1f2937;
+        --ai-background-color: #ecfdf5;
+        --technical-background-color: #fef3c7;
+        --file-background-color: #ede9fe;
+    }
+    
+    /* Dark theme variables - Multiple detection methods */
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --background-color: #2d3748;
+            --section-background-color: #2d3748;
+            --border-color: #4a5568;
+            --text-color: #e2e8f0;
+            --secondary-text-color: #a0aec0;
+            --ai-background-color: #1a2f1a;
+            --technical-background-color: #2d2a1a;
+            --file-background-color: #2d1b3d;
+        }
+    }
+    
+    /* Streamlit dark theme detection - body class */
+    body[data-theme="dark"],
+    .stApp[data-theme="dark"],
+    [data-theme="dark"] {
+        --background-color: #2d3748;
+        --section-background-color: #2d3748;
+        --border-color: #4a5568;
+        --text-color: #e2e8f0;
+        --secondary-text-color: #a0aec0;
+        --ai-background-color: #1a2f1a;
+        --technical-background-color: #2d2a1a;
+        --file-background-color: #2d1b3d;
+    }
+    
+    /* Additional Streamlit dark theme selectors */
+    .stApp:has([data-testid="stSidebar"][data-theme="dark"]),
+    html:has(.stApp[data-theme="dark"]) {
+        --background-color: #2d3748;
+        --section-background-color: #2d3748;
+        --border-color: #4a5568;
+        --text-color: #e2e8f0;
+        --secondary-text-color: #a0aec0;
+        --ai-background-color: #1a2f1a;
+        --technical-background-color: #2d2a1a;
+        --file-background-color: #2d1b3d;
+    }
+    
+    .file-metadata {
+        border-left-color: #6f42c1;
+        background-color: rgba(111, 66, 193, 0.05);
+    }
+    
+
     </style>
+    
+    <script>
+    // Enhanced theme detection for Streamlit
+    function detectAndApplyTheme() {
+        const stApp = document.querySelector('.stApp');
+        const sidebar = document.querySelector('[data-testid="stSidebar"]');
+        const body = document.body;
+        const html = document.documentElement;
+        
+        // Check multiple sources for theme
+        const isDark = 
+            window.matchMedia('(prefers-color-scheme: dark)').matches ||
+            (stApp && stApp.getAttribute('data-theme') === 'dark') ||
+            (sidebar && sidebar.getAttribute('data-theme') === 'dark') ||
+            (body && body.getAttribute('data-theme') === 'dark') ||
+            (html && html.getAttribute('data-theme') === 'dark');
+        
+        // Apply theme to multiple elements
+        const themeValue = isDark ? 'dark' : 'light';
+        
+        if (stApp) stApp.setAttribute('data-theme', themeValue);
+        if (body) body.setAttribute('data-theme', themeValue);
+        if (html) html.setAttribute('data-theme', themeValue);
+        
+        console.log('Theme detected and applied:', themeValue);
+    }
+    
+    // Run theme detection
+    detectAndApplyTheme();
+    
+    // Watch for theme changes
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', detectAndApplyTheme);
+    }
+    
+    // Watch for DOM changes (Streamlit updates)
+    const observer = new MutationObserver(detectAndApplyTheme);
+    observer.observe(document.body, { 
+        attributes: true, 
+        attributeFilter: ['data-theme', 'class'],
+        subtree: true 
+    });
+    
+    // Periodic check as fallback
+    setInterval(detectAndApplyTheme, 1000);
+    </script>
     """,
     unsafe_allow_html=True
 )
+
+# --- Theme Detection and Application ---
+# Add additional theme detection using Streamlit's component system
+st.markdown("""
+<script>
+// Force theme detection on page load
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+        detectAndApplyTheme();
+    }, 100);
+});
+
+// Additional theme detection for Streamlit updates
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        detectAndApplyTheme();
+    }, 500);
+});
+</script>
+""", unsafe_allow_html=True)
 
 # --- Main Application Area ---
 st.title("🖼️ Image-to-Prompt AI Assistant")
@@ -590,12 +1036,18 @@ with tab1:
                                     st.image(str(img_path))
                                 st.caption(image_info["name"])
                 if "videos" in message:
-                    video_cols = st.columns(len(message["videos"]))
+                    # Create more columns to make videos smaller
+                    num_videos = len(message["videos"])
+                    # Use more columns than videos to create smaller containers
+                    video_cols = st.columns([1, 2, 1] if num_videos == 1 else [2] * num_videos + [1] * max(0, 3 - num_videos))
                     for j, video_info in enumerate(message["videos"]):
-                        with video_cols[j]:
+                        col_index = 1 if num_videos == 1 else j  # Center single video, otherwise use sequential columns
+                        with video_cols[col_index]:
                             video_path = Path(video_info["path"])
                             if video_path.exists():
+                                st.markdown('<div class="video-thumbnail-small">', unsafe_allow_html=True)
                                 st.video(str(video_path))
+                                st.markdown('</div>', unsafe_allow_html=True)
                                 st.caption(video_info["name"])
             with col_btn:
                 if st.button("×", key=f"remove_msg_{idx}", help="Delete this message"):
@@ -627,9 +1079,12 @@ with tab1:
             # Initialize to empty list if nothing uploaded and no existing files
             st.session_state.uploaded_files = []
         
-        # Video upload section (only for Google)
-        if current_provider == "Google":
-            st.subheader("Upload Videos (Google Only)")
+
+        
+        # Video upload section (for Google and MiniCPM)
+        if current_provider in ["Google", "MiniCPM"]:
+            provider_text = "Google & MiniCPM" if current_provider == "MiniCPM" else "Google Only"
+            st.subheader(f"Upload Videos ({provider_text})")
             uploaded_videos_from_widget = st.file_uploader(
                 "Upload video(s)", 
                 type=["mp4", "avi", "mov", "mkv", "webm", "flv", "wmv", "m4v"],
@@ -645,7 +1100,7 @@ with tab1:
                 # Initialize to empty list if nothing uploaded and no existing files
                 st.session_state.uploaded_videos = []
         else:
-            # Clear videos if not using Google
+            # Clear videos if not using Google or MiniCPM
             st.session_state.uploaded_videos = []
         
         # Display all uploaded images in a grid
@@ -670,25 +1125,40 @@ with tab1:
                                 remove_uploaded_image(img_idx)
                             with st.popover("View Full Size", use_container_width=True):
                                 st.image(str(file_path))
+                            
+                            # Display metadata below the image
+                            display_image_metadata(file_path, original_name)
         
-        # Display all uploaded videos in a grid (only for Google)
-        if st.session_state.uploaded_videos and current_provider == "Google":
+        # Display all uploaded videos in a grid (for Google and MiniCPM)
+        if st.session_state.uploaded_videos and current_provider in ["Google", "MiniCPM"]:
             st.write("**Uploaded Videos:**")
             num_videos = len(st.session_state.uploaded_videos)
-            cols_per_row = min(3, num_videos)  # Maximum 3 videos per row
+            cols_per_row = min(4, num_videos)  # Maximum 4 videos per row for smaller thumbnails
             
             # Calculate how many rows we need
             num_rows = (num_videos + cols_per_row - 1) // cols_per_row
             
-            # Create a grid to display videos
+            # Create a grid to display videos with smaller columns
             for row in range(num_rows):
-                cols = st.columns(cols_per_row)
+                # Create columns with specific widths to make videos smaller
+                if cols_per_row == 1:
+                    cols = st.columns([1, 2, 1])  # Center single video
+                    active_cols = [1]
+                elif cols_per_row == 2:
+                    cols = st.columns([1, 2, 1, 2, 1])  # Two videos with spacing
+                    active_cols = [1, 3]
+                else:
+                    cols = st.columns(cols_per_row + 2)  # Add padding columns
+                    active_cols = list(range(1, cols_per_row + 1))
+                
                 for col_idx in range(cols_per_row):
                     vid_idx = row * cols_per_row + col_idx
                     if vid_idx < num_videos:
                         file_path, original_name = st.session_state.uploaded_videos[vid_idx]
-                        with cols[col_idx]:
+                        with cols[active_cols[col_idx] if col_idx < len(active_cols) else col_idx]:
+                            st.markdown('<div class="video-thumbnail">', unsafe_allow_html=True)
                             st.video(str(file_path))
+                            st.markdown('</div>', unsafe_allow_html=True)
                             st.caption(original_name)
                             if st.button("×", key=f"remove_vid_{vid_idx}"):
                                 remove_uploaded_video(vid_idx)
@@ -710,7 +1180,8 @@ with tab1:
                         uploaded_video_info=st.session_state.uploaded_videos
                     )
         with col2:
-            if prompt := st.chat_input("...or add a message and press Enter"):
+            # Chat input
+            if prompt := st.chat_input("Type your message here..."):
                 process_and_send_message(
                     prompt_text=prompt, 
                     uploaded_file_info=st.session_state.uploaded_files,
@@ -789,5 +1260,5 @@ st.markdown("""
 # Example: get your prompt text as before
 prompt_text = st.session_state.messages[-1]["content"] if st.session_state.messages else ""
 
-st.markdown("**Prompt:**")
-st.code(prompt_text, language=None)  # Shows a copy button with wrapping
+# st.markdown("**Prompt:**")
+# st.code(prompt_text, language=None)  # Shows a copy button with wrapping

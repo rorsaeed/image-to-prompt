@@ -6,16 +6,40 @@ import subprocess
 import mimetypes
 import time
 
+# Import MiniCPM client (with error handling for optional dependency)
+try:
+    from minicpm_client import MiniCPMClient
+    MINICPM_AVAILABLE = True
+except ImportError:
+    MINICPM_AVAILABLE = False
+    MiniCPMClient = None
+
 class APIClient:
     """A client for interacting with local LLM APIs (Ollama, LM Studio, and Koboldcpp)."""
     
-    def __init__(self, provider="Ollama", base_url="http://localhost:11434", google_api_key=None, ollama_keep_alive=None, unload_after_response=False):
+    def __init__(self, provider="Ollama", base_url="http://localhost:11434", google_api_key=None, ollama_keep_alive=None, unload_after_response=False, minicpm_config=None):
         self.provider = provider
         self.base_url = base_url.rstrip('/') if base_url else None
         self.google_api_key = google_api_key
         self.ollama_keep_alive = ollama_keep_alive
         self.unload_after_response = unload_after_response
-        if self.provider in ("LM Studio", "Koboldcpp"):
+        self.minicpm_client = None
+        
+        if self.provider == "MiniCPM":
+            if not MINICPM_AVAILABLE:
+                raise ImportError("MiniCPM dependencies not available. Please install: torch, transformers, Pillow, decord, scipy, numpy")
+            if minicpm_config:
+                self.minicpm_client = MiniCPMClient(
+                    model_name=minicpm_config.get("selected_model", "MiniCPM-V-4.5-int4"),
+                    device=minicpm_config.get("device", "auto")
+                )
+                # Configure video parameters
+                self.minicpm_client.set_video_config(
+                    max_num_frames=minicpm_config.get("max_num_frames", 180),
+                    max_num_packing=minicpm_config.get("max_num_packing", 3),
+                    fps=minicpm_config.get("default_fps", 3)
+                )
+        elif self.provider in ("LM Studio", "Koboldcpp"):
             self.api_endpoint = f"{self.base_url}/v1/chat/completions"
             self.models_endpoint = f"{self.base_url}/v1/models"
         elif self.provider == "Google":
@@ -27,7 +51,12 @@ class APIClient:
 
     def get_available_models(self):
         """Fetches the list of available models from the API."""
-        if self.provider == "Google":
+        if self.provider == "MiniCPM":
+            if MINICPM_AVAILABLE:
+                return list(MiniCPMClient.get_supported_models().keys())
+            else:
+                return []
+        elif self.provider == "Google":
             return ["gemini-1.5-flash-latest", "gemini-2.0-flash", "gemini-2.5-flash"]
         try:
             response = requests.get(self.models_endpoint, timeout=10)
@@ -141,6 +170,73 @@ class APIClient:
     def generate_chat_response(self, model, messages, images=None, videos=None, stream=True):
         """Sends a request to the chat API and yields the response chunks."""
         headers = {"Content-Type": "application/json"}
+        
+        if self.provider == "MiniCPM":
+            if not self.minicpm_client:
+                yield "--- \n**MiniCPM Error:**\n\n`MiniCPM client not initialized.`"
+                return
+            
+            try:
+                # Load the model if not already loaded
+                if not hasattr(self.minicpm_client, 'model') or self.minicpm_client.model is None:
+                    yield "Loading MiniCPM model..."
+                    self.minicpm_client.load_model()
+                    yield "\nModel loaded successfully.\n\n"
+                
+                # Extract system prompt and user prompt from messages
+                system_prompt = ""
+                user_prompt = ""
+                
+                for msg in messages:
+                    if msg['role'] == 'system':
+                        system_prompt = msg.get('content', '')
+                    elif msg['role'] == 'user':
+                        user_prompt = msg.get('content', '')
+                
+                # Handle image analysis
+                if images and len(images) > 0:
+                    image_path = str(images[0])  # Convert pathlib.Path to string
+                    for chunk in self.minicpm_client.analyze_image(
+                        image_path=image_path,
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        stream=stream
+                    ):
+                        yield chunk
+                
+                # Handle video analysis
+                elif videos and len(videos) > 0:
+                    video_path = str(videos[0])  # Convert pathlib.Path to string
+                    result, metadata = self.minicpm_client.analyze_video(
+                        video_path=video_path,
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        fps=self.minicpm_client.default_fps
+                    )
+                    
+                    # Print video analysis metadata to console
+                    print(f"\n=== MiniCPM Video Analysis ===")
+                    print(f"Video Duration: {metadata['video_duration']:.2f} seconds")
+                    print(f"Total Frames Analyzed: {metadata['analyzed_frames']}")
+                    print(f"Sampling FPS: {metadata['sampling_fps']:.2f}")
+                    print(f"Actual FPS: {metadata['actual_fps']:.2f}")
+                    print(f"Packing Numbers: {metadata['packing_nums']}")
+                    print("=" * 30)
+                    
+                    yield result
+                
+                # Handle text-only analysis
+                else:
+                    # For text-only, we'll use image analysis with a placeholder
+                    yield "Text-only analysis not supported with MiniCPM. Please provide an image or video."
+                
+            except Exception as e:
+                yield f"--- \n**MiniCPM Error:**\n\n`{str(e)}`"
+            finally:
+                # Unload model if configured to do so
+                if self.unload_after_response:
+                    self.unload_model(model)
+            return
         
         if self.provider == "Google":
             if not self.google_api_key:
@@ -431,12 +527,21 @@ class APIClient:
                 f"**Full raw response from server:**\n\n```\n{raw_response_for_debugging or 'Response was empty.'}\n```"
             )
         finally:
-            if self.provider == "LM Studio" and self.unload_after_response:
+            if self.provider in ["LM Studio", "MiniCPM"] and self.unload_after_response:
                 self.unload_model(model)
 
     def unload_model(self, model_name):
         """Unloads a model from memory."""
-        if self.provider == "LM Studio":
+        if self.provider == "MiniCPM":
+            if self.minicpm_client:
+                try:
+                    self.minicpm_client.unload_model()
+                    return {"status": "success", "message": f"Successfully unloaded MiniCPM model '{model_name}'"}
+                except Exception as e:
+                    return {"status": "error", "message": f"Failed to unload MiniCPM model: {str(e)}"}
+            else:
+                return {"status": "error", "message": "MiniCPM client not initialized"}
+        elif self.provider == "LM Studio":
             try:
                 # Use subprocess to run the lms command
                 print("Attempting to unload LM Studio models...")

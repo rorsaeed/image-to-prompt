@@ -2,3 +2,15 @@
 streamlit
 requests
 streamlit-image-select
+
+# MiniCPM dependencies
+torch
+transformers
+Pillow
+decord
+scipy
+numpy
+
+# Metadata extraction dependencies
+exifread
+piexif
