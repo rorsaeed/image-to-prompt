@@ -4,6 +4,8 @@ This Python application provides a user-friendly interface to interact with loca
 
 ![Application Screenshot](https://github.com/rorsaeed/image-to-prompt/blob/main/Screenshot.png)
 
+Get the free Pro version: [https://github.com/rorsaeed/ai-prompt-assistant-pro/](https://github.com/rorsaeed/ai-prompt-assistant-pro/)
+
 ## Features
 
 - **Multi-API Support**: Works with Ollama, LM Studio, and Koboldcpp APIs, and Google's Gemini API.
